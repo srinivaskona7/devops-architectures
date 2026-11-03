@@ -18,6 +18,7 @@ code,pre,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 :not(pre)>code{background:var(--surface2);border:1px solid var(--line);border-radius:5px;padding:.08em .38em;font-size:.88em;overflow-wrap:anywhere}
 /* ---- header ---- */
 .top{position:sticky;top:0;z-index:50;height:var(--head);display:flex;align-items:center;gap:12px;padding:0 20px;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand-logo{width:32px;height:32px;border-radius:8px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))}
 .brand{display:flex;align-items:center;gap:10px;font-weight:800;color:var(--ink);white-space:nowrap}
 .brand i{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;font-style:normal;font-size:13px;font-weight:800}
 .crumb{color:var(--mute);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
