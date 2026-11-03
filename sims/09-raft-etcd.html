@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Raft consensus and etcd quorum simulator</title>
+<meta name="sim:title" content="Raft consensus and etcd quorum simulator">
+<meta name="sim:topic" content="04-kubernetes">
+<meta name="sim:summary" content="Step through Raft leader election, log replication, commit on majority, leader crash, partition and heal on 3 or 5 nodes, with quorum arithmetic for etcd sizing.">
+<meta name="sim:concepts" content="Raft,etcd,consensus,term,election timeout,RequestVote,AppendEntries,quorum,log replication,partition,leader election,split brain">
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--hi:#e8f1fc;--okbg:#dcf3e5;--badbg:#fbe1de;--warnbg:#fdf0d6;--focus:#7a3cff;--old:#9aa6b4;--new:#0b63c5}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--hi:#1b2a3c;--okbg:#14301f;--badbg:#3a1a18;--warnbg:#3a2c10;--focus:#b79bff;--old:#6b7787;--new:#5aa2f5}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1240px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}h3{font-size:.92rem;margin:12px 0 6px}
+.lede{margin:4px 0 12px;color:var(--muted)}.muted{color:var(--muted)}
+button,select,input{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover:not(:disabled){background:var(--hi)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number]{min-height:36px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);max-width:100%}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--accent)}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.bar-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.bar-ctl label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;border:1px solid var(--border);background:var(--card);font-size:.85rem}
+.say{padding:10px 14px;border-left:4px solid var(--accent);background:var(--hi);border-radius:6px;margin:8px 0;min-height:48px;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0;min-width:0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px}
+@media(min-width:960px){.grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.opts{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.opts button{text-align:left;white-space:normal}
+.opts button.right{background:var(--okbg);border-color:var(--ok)}.opts button.wrong{background:var(--badbg);border-color:var(--bad)}
+#quiz{border-color:var(--warn);background:var(--warnbg)}
+.scroll{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-align:top}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.kv div{border:1px solid var(--border);border-radius:6px;padding:4px 8px}.kv b{display:block;font-size:1.15rem}
+.bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.field{display:flex;flex-direction:column;gap:2px;margin:6px 0;min-width:0}.field>span{font-size:.85rem;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+svg{max-width:100%;height:auto;display:block}
+.simp li{margin:3px 0}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.node{border:1px solid var(--border);border-radius:8px;padding:8px;min-width:0;overflow-wrap:anywhere;background:var(--card)}
+.node.leader{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}.node.cand{border-color:var(--warn);background:var(--warnbg)}
+.node.down{opacity:.6;border-style:dashed}.node small{display:block;color:var(--muted)}
+.role{font-weight:700}
+.log{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;min-height:26px}
+.ent{display:inline-block;padding:1px 6px;border:1px dashed var(--muted);border-radius:4px;font-size:.78rem;font-family:ui-monospace,Menlo,Consolas,monospace}
+.ent.c{border-style:solid;border-color:var(--ok);background:var(--okbg)}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.78rem;font-weight:700;border:1px solid var(--border)}
+.badge.hit{background:var(--okbg);color:var(--ok);border-color:var(--ok)}.badge.miss{background:var(--badbg);color:var(--bad);border-color:var(--bad)}
+.hl{background:var(--warnbg)}
+.mini{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.ev{max-height:190px;overflow:auto}
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">&larr; Back to curriculum</a><h1>Raft consensus and etcd quorum simulator</h1><button id="theme" aria-label="Toggle light or dark theme">Theme</button></header>
+<main>
+<p class="lede">Watch Raft elect a leader, replicate and commit writes, survive a crash and a partition. Then cut links and kill nodes under Try it. All numbers are examples.</p>
+<div class="bar-ctl" role="group" aria-label="Playback controls">
+<button id="btnBack" aria-label="Back one step (Left arrow)">&#9664; Back</button>
+<button id="btnPlay" class="primary" aria-label="Play (Space)">&#9654; Play</button>
+<button id="btnStep" aria-label="Step forward (Right arrow)">Step &#9654;&#9654;</button>
+<button id="btnReset" aria-label="Reset (R)">&#8634; Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predict" checked aria-label="Predict first"> Predict first</label>
+<span class="chip" id="score" aria-live="polite">Score 0/0</span><span class="chip" id="stepinfo">Step 0 / 0</span>
+</div>
+<div id="say" class="say" role="status" aria-live="polite"></div>
+<section id="quiz" class="card" hidden aria-label="Prediction question"><h2>Predict first: what happens next?</h2><p></p><div class="opts"></div><div id="quizFb" role="status"></div></section>
+<div class="grid">
+<div>
+<section class="card" aria-label="Live state"><h2>Live state</h2><div id="state"></div></section>
+<section id="summary" class="card" hidden aria-label="Summary"></section>
+</div>
+<aside>
+<section class="card" id="tryit" aria-label="Try it"><h2>Try it (each action branches the run from the current step)</h2>
+<div class="row"><div class="field"><span>Cluster size</span><select id="ncount" aria-label="Cluster size"><option selected>3</option><option>5</option></select></div>
+<div class="field"><span>Random seed</span><input type="number" id="seed" value="7" min="1" aria-label="Random seed"></div></div>
+<h3>Nodes</h3><div class="row"><select id="tnode" aria-label="Node"></select><button id="bKill" aria-label="Kill selected node">Kill</button><button id="bRevive" aria-label="Revive selected node">Revive</button></div>
+<h3>Links</h3><div class="row"><select id="lA" aria-label="Link end A"></select><select id="lB" aria-label="Link end B"></select><button id="bCut" aria-label="Cut link">Cut</button><button id="bHeal" aria-label="Heal link">Heal</button><button id="bHealAll" aria-label="Heal all links">Heal all</button></div>
+<h3>Client write</h3><div class="row"><select id="wnode" aria-label="Send write to"></select><input type="text" id="wcmd" value="x=1" maxlength="12" aria-label="Command" style="min-height:36px;width:90px"><button id="bWrite" aria-label="Send write">Send write</button></div>
+<h3>Time</h3><div class="row"><button id="bAdv" aria-label="Run to next event">Run to next event</button><button id="bTicks" aria-label="Run 10 ticks">Run 10 ticks</button></div>
+<p class="muted" id="inv"></p></section>
+<section class="card" aria-label="Quorum arithmetic"><h2>Quorum arithmetic and etcd sizing</h2>
+<p>Majority of N = floor(N/2)+1. Failures tolerated = N minus quorum.</p>
+<div class="scroll"><table><thead><tr><th>N</th><th>Quorum</th><th>Tolerated</th><th>Note</th></tr></thead><tbody id="qtab"></tbody></table></div>
+<p>Why 3 or 5 and not 4: 4 members need a quorum of 3 and still tolerate only 1 failure, exactly like 3, while adding one more member to run and one more copy to write. A 2/2 split also leaves neither side with a majority. etcd documentation therefore recommends odd cluster sizes, typically 3 or 5; larger clusters add replication cost without being faster.</p></section>
+<section class="card simp" aria-label="Simplifications"><h2>Simplifications</h2><ul>
+<li>No log compaction or snapshots, no cluster membership change, and no pre-vote or check-quorum (a partitioned leader keeps its role until it sees a higher term, as in the base paper).</li>
+<li>Time is discrete ticks; election timeout 10 to 19 ticks, heartbeat every 3, message delay 1 tick. All values are examples, not etcd defaults.</li>
+<li>A new leader appends a no-op entry, as etcd does, so earlier-term entries can be committed (paper section 5.4.2). The walkthrough shortens some timers to demonstrate the vote rule.</li>
+<li>Reads, linearizability, disk persistence timing and learner nodes are not modelled. Based on Ongaro and Ousterhout, In Search of an Understandable Consensus Algorithm.</li></ul>
+<p class="muted">Keys: Space play/pause, Left back, Right step, R reset.</p></section>
+</aside></div>
+</main>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,timer:null,init:null,initSay:''};
+const App={};
+(function(){let t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+$('#theme').onclick=()=>{const n=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('dop:theme',n)}catch(e){};if(App.theme)App.theme()};
+function tally(){let a=0,r=0;for(const k in SIM.answers){a++;const s=SIM.steps[k];if(s&&s.predict&&SIM.answers[k]===s.predict.correct)r++}return{a,r}}
+function hideQuiz(){$('#quiz').hidden=true;SIM.pending=null}
+function render(){
+ const s=SIM.idx>=0?SIM.steps[SIM.idx]:null;
+ $('#say').textContent=s?s.say:SIM.initSay;
+ App.render(s?s.view:SIM.init,s);
+ $('#stepinfo').textContent='Step '+(SIM.idx+1)+' / '+SIM.steps.length;
+ $('#btnBack').disabled=SIM.idx<0;
+ const t=tally();$('#score').textContent='Score '+t.r+'/'+t.a;
+ const sm=$('#summary');
+ if(SIM.idx>=0&&SIM.idx===SIM.steps.length-1){
+  let h='<h2>Summary</h2><p><b>Prediction score: '+t.r+' / '+t.a+'</b>'+(t.a?'':' (turn on Predict first and reset to be quizzed)')+'</p>';
+  h+=(App.summary?App.summary(s):'');
+  const ks=Object.keys(SIM.answers).map(Number).sort((a,b)=>a-b);
+  if(ks.length){h+='<ol>';for(const k of ks){const p=SIM.steps[k].predict,ok=SIM.answers[k]===p.correct;
+   h+='<li><span class="'+(ok?'ok':'bad')+'">'+(ok?'Correct':'Missed')+'</span>: '+esc(p.q)+'<br><span class="muted">You chose: '+esc(p.opts[SIM.answers[k]])+'. Answer: '+esc(p.opts[p.correct])+'. '+esc(p.why)+'</span></li>'}h+='</ol>'}
+  sm.innerHTML=h;sm.hidden=false}else sm.hidden=true;
+ if(App.afterRender)App.afterRender(s);
+}
+function showQuiz(n){
+ const p=SIM.steps[n].predict;SIM.pending=n;
+ $('#quiz p').textContent=p.q;$('#quizFb').textContent='';
+ const o=$('#quiz .opts');o.innerHTML='';
+ p.opts.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.setAttribute('aria-label','Option '+(i+1)+': '+t);b.onclick=()=>answer(i);o.appendChild(b)});
+ $('#quiz').hidden=false;
+}
+function answer(i){
+ const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict;SIM.answers[n]=i;
+ [...$('#quiz .opts').children].forEach((b,j)=>{b.disabled=true;if(j===p.correct)b.classList.add('right');else if(j===i)b.classList.add('wrong')});
+ $('#quizFb').innerHTML='<b class="'+(i===p.correct?'ok':'bad')+'">'+(i===p.correct?'Correct. ':'Not quite. ')+'</b>'+esc(p.why);
+ SIM.pending=null;SIM.idx=n;render();
+}
+function pause(){if(SIM.timer){clearInterval(SIM.timer);SIM.timer=null}$('#btnPlay').innerHTML='&#9654; Play';$('#btnPlay').setAttribute('aria-label','Play (Space)')}
+function stepFwd(){
+ if(SIM.pending!==null)return false;
+ const n=SIM.idx+1;if(n>=SIM.steps.length){pause();return false}
+ const s=SIM.steps[n];
+ hideQuiz();
+ if($('#predict').checked&&s.predict&&SIM.answers[n]===undefined){showQuiz(n);pause();return false}
+ SIM.idx=n;render();return true;
+}
+function stepBack(){pause();hideQuiz();if(SIM.idx>=0){SIM.idx--;render()}}
+function reset(){pause();hideQuiz();SIM.answers={};SIM.idx=-1;App.rebuild();render()}
+function play(){
+ if(SIM.timer){pause();return}
+ if(SIM.idx>=SIM.steps.length-1)return;
+ $('#btnPlay').innerHTML='&#10074;&#10074; Pause';$('#btnPlay').setAttribute('aria-label','Pause (Space)');
+ const tick=()=>{if(!stepFwd())pause()};
+ SIM.timer=setInterval(tick,1300/parseFloat($('#speed').value));tick();
+}
+$('#speed').onchange=()=>{if(SIM.timer){clearInterval(SIM.timer);SIM.timer=setInterval(()=>{if(!stepFwd())pause()},1300/parseFloat($('#speed').value))}};
+$('#btnStep').onclick=()=>{pause();stepFwd()};$('#btnBack').onclick=stepBack;$('#btnPlay').onclick=play;$('#btnReset').onclick=reset;
+document.addEventListener('keydown',e=>{
+ const tg=e.target.tagName,ty=e.target.type;if(tg==='SELECT'||tg==='TEXTAREA'||(tg==='INPUT'&&ty!=='checkbox')||e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key===' '){e.preventDefault();play()}
+ else if(e.key==='ArrowRight'){e.preventDefault();pause();stepFwd()}
+ else if(e.key==='ArrowLeft'){e.preventDefault();stepBack()}
+ else if(e.key==='r'||e.key==='R'){e.preventDefault();reset()}
+});
+document.addEventListener('keyup',e=>{if(e.key===' '&&(e.target.tagName==='BUTTON'||e.target.type==='checkbox'))e.preventDefault()});
+
+/* ---------- Raft core (pure, deterministic, no DOM) ---------- */
+const RT={T:10,HB:3};
+const quorum=n=>Math.floor(n/2)+1;
+const nm=i=>'n'+(i+1);
+function rnd(C){C.rs=(C.rs+0x6D2B79F5)|0;let t=C.rs;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}
+function nto(C){return RT.T+Math.floor(rnd(C)*RT.T)}
+function mk(n,seed){const C={n,rs:(Math.imul(seed|0,2654435761)^0x9e3779b9)|0,tick:0,nodes:[],q:[],cut:[],leaders:{},ledger:{},viol:[],ev:[],rec:false,dmin:1,dmax:1,loss:0,seq:0};
+ for(let i=0;i<n;i++)C.nodes.push({id:i,alive:true,role:'F',term:0,votedFor:-1,log:[],commit:0,el:0,to:0,votes:[],next:[],match:[],hb:0});
+ C.nodes.forEach(x=>{x.to=nto(C)});return C}
+function ev(C,k,n,msg){if(C.rec)C.ev.push({k,n,msg,t:C.tick})}
+const key=(a,b)=>a<b?a+'-'+b:b+'-'+a;
+const linked=(C,a,b)=>!C.cut.includes(key(a,b));
+function send(C,from,to,m){if(!linked(C,from,to))return;if(C.loss&&rnd(C)<C.loss)return;
+ const d=C.dmin+Math.floor(rnd(C)*(C.dmax-C.dmin+1));C.q.push(Object.assign({at:C.tick+d,from,to,seq:C.seq++},m))}
+const lastI=x=>[x.log.length,x.log.length?x.log[x.log.length-1].term:0];
+function stepDown(C,x,term){
+ const was=x.term;
+ if(term>x.term){x.term=term;x.votedFor=-1}
+ if(x.role==='L'&&term>was){ev(C,'stepdown',x.id,nm(x.id)+' (leader, term '+was+') sees a message with term '+term+', higher than its own, so it steps down to follower.')}
+ x.role='F';x.votes=[]}
+function ent(e,i){return '#'+i+'(t'+e.term+' '+e.cmd+')'}
+function startElection(C,x){
+ const waited=x.to;x.role='C';x.term++;x.votedFor=x.id;x.votes=[x.id];x.el=0;x.to=nto(C);
+ ev(C,'candidate',x.id,nm(x.id)+"'s election timer ("+waited+' ticks) expired with no heartbeat, so it becomes a candidate in term '+x.term+', votes for itself and sends RequestVote to the others.');
+ const [li,lt]=lastI(x);
+ for(const y of C.nodes)if(y.id!==x.id)send(C,x.id,y.id,{type:'RV',term:x.term,lastIdx:li,lastTerm:lt});
+}
+function sendAE(C,x,to){
+ const nx=x.next[to],prev=nx-1,pt=prev>0?x.log[prev-1].term:0;
+ send(C,x.id,to,{type:'AE',term:x.term,prevIdx:prev,prevTerm:pt,entries:x.log.slice(prev),lc:x.commit})}
+function bcastAE(C,x){for(const y of C.nodes)if(y.id!==x.id)sendAE(C,x,y.id)}
+function becomeLeader(C,x){
+ x.role='L';
+ if(C.leaders[x.term]!==undefined&&C.leaders[x.term]!==x.id)C.viol.push('two leaders in term '+x.term);
+ C.leaders[x.term]=x.id;
+ for(const i in C.ledger){const e=C.ledger[i],l=x.log[i-1];if(!l||l.term!==e.term||l.cmd!==e.cmd)C.viol.push(nm(x.id)+' became leader without committed entry '+i)}
+ x.next=C.nodes.map(()=>x.log.length+1);x.match=C.nodes.map(()=>0);
+ x.log.push({term:x.term,cmd:'no-op'});x.match[x.id]=x.log.length;x.hb=0;
+ ev(C,'leader',x.id,nm(x.id)+' has '+x.votes.length+' of '+C.n+' votes (quorum '+quorum(C.n)+') and becomes leader of term '+x.term+'; it appends a no-op entry and starts sending AppendEntries heartbeats.');
+ bcastAE(C,x)}
+function tryCommit(C,x){
+ const q=quorum(C.n);
+ for(let N=x.log.length;N>x.commit;N--){
+  if(x.log[N-1].term!==x.term)break;
+  if(x.match.filter(m=>m>=N).length>=q){
+   for(let i=x.commit+1;i<=N;i++){const e=x.log[i-1],o=C.ledger[i];
+    if(o&&(o.term!==e.term||o.cmd!==e.cmd))C.viol.push('conflicting commit at index '+i);else C.ledger[i]={term:e.term,cmd:e.cmd}}
+   const old=x.commit;x.commit=N;
+   ev(C,'commit',x.id,'Leader '+nm(x.id)+' sees index '+N+' stored on '+x.match.filter(m=>m>=N).length+' of '+C.n+' nodes (quorum '+q+') and its term, so commit index moves '+old+' to '+N+'.');
+   return}}}
+function deliver(C,m){
+ const x=C.nodes[m.to];if(!x.alive||!linked(C,m.from,m.to))return;
+ if(m.type==='RV'){
+  if(m.term>x.term)stepDown(C,x,m.term);
+  const [li,lt]=lastI(x),upTo=m.lastTerm>lt||(m.lastTerm===lt&&m.lastIdx>=li);
+  const free=x.votedFor===-1||x.votedFor===m.from;
+  const grant=m.term===x.term&&free&&upTo;
+  if(grant){x.votedFor=m.from;x.el=0;x.to=nto(C);ev(C,'grant',x.id,nm(x.id)+' grants its vote to '+nm(m.from)+' for term '+m.term+'.')}
+  else if(m.term===x.term&&free&&!upTo)ev(C,'deny',x.id,nm(x.id)+' denies '+nm(m.from)+': its last entry is (index '+li+', term '+lt+') but the candidate offers (index '+m.lastIdx+', term '+m.lastTerm+'), which is less up to date.');
+  else ev(C,'deny2',x.id,nm(x.id)+' denies '+nm(m.from)+(m.term<x.term?' (stale term '+m.term+')':' (already voted in term '+x.term+')')+'.');
+  send(C,x.id,m.from,{type:'RVR',term:x.term,granted:grant});
+ }else if(m.type==='RVR'){
+  if(m.term>x.term){stepDown(C,x,m.term);return}
+  if(x.role==='C'&&m.term===x.term&&m.granted&&!x.votes.includes(m.from)){x.votes.push(m.from);if(x.votes.length>=quorum(C.n))becomeLeader(C,x)}
+ }else if(m.type==='AE'){
+  if(m.term<x.term){send(C,x.id,m.from,{type:'AER',term:x.term,ok:false,hint:0});return}
+  stepDown(C,x,m.term);x.el=0;x.to=nto(C);
+  if(m.prevIdx>x.log.length||(m.prevIdx>0&&x.log[m.prevIdx-1].term!==m.prevTerm)){send(C,x.id,m.from,{type:'AER',term:x.term,ok:false,hint:x.log.length});return}
+  m.entries.forEach((e,k)=>{const i=m.prevIdx+1+k;
+   if(x.log.length>=i&&x.log[i-1].term!==e.term){const gone=x.log.splice(i-1);
+    ev(C,'truncate',x.id,nm(x.id)+' finds its entries '+gone.map((g,j)=>ent(g,i+j)).join(', ')+' conflict with leader '+nm(m.from)+"'s log and deletes them; the leader's entries replace them.")}
+   if(x.log.length<i)x.log.push({term:e.term,cmd:e.cmd})});
+  const last=m.prevIdx+m.entries.length;
+  if(Math.min(m.lc,last)>x.commit){const nc=Math.min(m.lc,last);
+   for(let i=x.commit+1;i<=nc;i++){const o=C.ledger[i],e=x.log[i-1];if(o&&(o.term!==e.term||o.cmd!==e.cmd))C.viol.push(nm(x.id)+' commit mismatch at '+i)}
+   x.commit=nc}
+  send(C,x.id,m.from,{type:'AER',term:x.term,ok:true,match:last});
+ }else if(m.type==='AER'){
+  if(m.term>x.term){stepDown(C,x,m.term);return}
+  if(x.role!=='L'||m.term!==x.term)return;
+  if(m.ok){x.match[m.from]=Math.max(x.match[m.from],m.match);x.next[m.from]=x.match[m.from]+1;tryCommit(C,x)}
+  else{x.next[m.from]=Math.max(1,Math.min(x.next[m.from]-1,m.hint+1));sendAE(C,x,m.from)}
+ }}
+function tick(C){
+ C.tick++;
+ const due=C.q.filter(m=>m.at<=C.tick).sort((a,b)=>a.at-b.at||a.seq-b.seq);
+ C.q=C.q.filter(m=>m.at>C.tick);
+ for(const m of due)deliver(C,m);
+ for(const x of C.nodes){if(!x.alive)continue;
+  if(x.role==='L'){x.hb++;if(x.hb>=RT.HB){x.hb=0;bcastAE(C,x)}}
+  else{x.el++;if(x.el>=x.to)startElection(C,x)}}
+}
+function write(C,id,cmd){const x=C.nodes[id];if(!x||!x.alive||x.role!=='L')return false;
+ x.log.push({term:x.term,cmd});x.match[x.id]=x.log.length;
+ ev(C,'write',id,"Client write '"+cmd+"' is appended to "+nm(id)+"'s log at index "+x.log.length+' (term '+x.term+'); it is not committed yet, so '+nm(id)+' sends it to the followers.');
+ bcastAE(C,x);return true}
+function kill(C,id){const x=C.nodes[id];x.alive=false;x.role='F';x.votes=[];ev(C,'kill',id,nm(id)+' crashes. Its term, vote and log are persisted on disk; everything else is lost.')}
+function revive(C,id){const x=C.nodes[id];x.alive=true;x.role='F';x.commit=0;x.el=0;x.to=nto(C);x.votes=[];ev(C,'revive',id,nm(id)+' restarts as a follower with its persisted term, vote and log.')}
+function cutSides(C,A){for(const a of A)for(const b of C.nodes.map(n=>n.id))if(!A.includes(b)&&!C.cut.includes(key(a,b)))C.cut.push(key(a,b))}
+function leaderOf(C){let b=-1;for(const x of C.nodes)if(x.alive&&x.role==='L'&&(b<0||x.term>C.nodes[b].term))b=x.id;return b}
+function check(C){
+ const out=C.viol.slice(),q=quorum(C.n);
+ for(const i in C.ledger){const e=C.ledger[i];let c=0;for(const x of C.nodes){const l=x.log[i-1];if(l&&l.term===e.term&&l.cmd===e.cmd)c++}
+  if(c<q)out.push('committed entry '+i+' held by only '+c+' nodes')}
+ for(let a=0;a<C.n;a++)for(let b=a+1;b<C.n;b++){const A=C.nodes[a].log,B=C.nodes[b].log;let m=Math.min(A.length,B.length),hit=0;
+  for(let i=m;i>=1;i--)if(A[i-1].term===B[i-1].term){hit=i;break}
+  for(let i=1;i<=hit;i++)if(A[i-1].term!==B[i-1].term||A[i-1].cmd!==B[i-1].cmd){out.push('log matching broken '+a+','+b+' at '+i);break}}
+ return out}
+const clone=o=>JSON.parse(JSON.stringify(o));
+/* Randomised headless run: chaos phase, then heal everything and check convergence. */
+function fuzz(seed,ticks){
+ const n=seed%2?5:3,C=mk(n,seed),R={s:(seed*7919+13)|0};
+ const r=()=>{R.s=(R.s+0x6D2B79F5)|0;let t=R.s;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};
+ C.dmin=1;C.dmax=3;C.loss=0.05;let bad=[],w=0;
+ const chaos=ticks||500;
+ for(let t=0;t<chaos;t++){
+  const p=r();
+  if(p<0.02){const a=C.nodes.filter(x=>x.alive);if(a.length)kill(C,a[Math.floor(r()*a.length)].id)}
+  else if(p<0.05){const d=C.nodes.filter(x=>!x.alive);if(d.length)revive(C,d[Math.floor(r()*d.length)].id)}
+  else if(p<0.08){const a=Math.floor(r()*n),b=Math.floor(r()*n);if(a!==b){const k=key(a,b),i=C.cut.indexOf(k);if(i>=0)C.cut.splice(i,1);else C.cut.push(k)}}
+  else if(p<0.10)C.cut=[];
+  else if(p<0.10+0.12){const ls=C.nodes.filter(x=>x.alive&&x.role==='L');if(ls.length)write(C,ls[Math.floor(r()*ls.length)].id,'w'+(w++))}
+  tick(C);
+  if(t%5===0){const v=check(C);if(v.length){bad=v;break}}
+ }
+ let converged=false,leaders=0;
+ if(!bad.length){
+  C.cut=[];C.loss=0;C.dmax=1;C.nodes.forEach(x=>{if(!x.alive)revive(C,x.id)});
+  for(let t=0;t<400;t++){tick(C);if(t===200){const l=leaderOf(C);if(l>=0)write(C,l,'final')}}
+  bad=check(C);
+  const l=leaderOf(C),L=l>=0?C.nodes[l]:null;
+  converged=!!L&&C.nodes.every(x=>JSON.stringify(x.log)===JSON.stringify(L.log))&&L.commit===L.log.length;
+  leaders=C.nodes.filter(x=>x.role==='L'&&x.alive).length;
+ }
+ return {n,seed,viol:bad,committed:Object.keys(C.ledger).length,terms:Object.keys(C.leaders).length,converged,leaders}}
+/* ---------- Simulator ---------- */
+const cfg={n:3,seed:7};
+let C=null,scratch=null;
+const SIG=['candidate','leader','stepdown','commit','truncate','write','deny'];
+function build(){
+ const N=cfg.n,q=quorum(N),lag=N-q;
+ C=mk(N,cfg.seed);C.rec=true;
+ SIM.steps=[];SIM.init={C:clone(C),ev:[]};
+ SIM.initSay='A cluster of '+N+' nodes starts as followers at term 0. Each has a random election timeout (10 to 19 ticks here, example values) and no leader exists yet.';
+ const push=(say,predict)=>{SIM.steps.push({say,view:{C:clone(C),ev:C.ev.slice()},predict});C.ev=[]};
+ const adv=cap=>{for(let i=0;i<(cap||150);i++){tick(C);if(C.ev.some(e=>SIG.includes(e.k)))return true}return false};
+ const autoSay=()=>C.ev.filter(e=>SIG.includes(e.k)).map(e=>e.msg).join(' ');
+ const settle=k=>{for(let i=0;i<k;i++)tick(C)};
+ const stepAdv=(pred,cap)=>{const ok=adv(cap);push(ok?autoSay():'Nothing notable happened for a long time.',pred);return ok};
+ const qopts=(opts,correct,q,why)=>({q,opts,correct,why});
+ // 1. initial election
+ let first=true,g=0;
+ do{const ok=stepAdv(null);const st=SIM.steps[SIM.steps.length-1];
+  if(first&&ok){first=false;const c=C.ev&&st.view.ev.find(e=>e.k==='candidate');
+   if(c)st.predict=qopts(C.nodes.map(x=>nm(x.id)),c.n,'All '+N+' nodes are followers with different random timers. Which node will time out first and start the first election?','The node whose randomized election timeout is shortest times out first (here '+nm(c.n)+'). Randomization is how Raft makes split votes rare.')}
+ }while(leaderOf(C)<0&&++g<12);
+ settle(5);push('Heartbeats (empty AppendEntries) arrive every '+RT.HB+' ticks, so followers keep resetting their election timers and no new election starts.');
+ const L=leaderOf(C),lg=C.nodes.filter(x=>x.id!==L).slice(0,lag).map(x=>x.id);
+ C.cut=[];cutSides(C,[L]);C.cut=C.cut.filter(k=>lg.some(g=>k===key(L,g)));
+ push('Setup for the vote-safety demo: the link between leader '+nm(L)+' and '+lg.map(nm).join(', ')+' is cut, so '+(lag>1?'those nodes':'that node')+' will miss the next write. A write still reaches '+(q-1)+' follower(s), which with the leader is a quorum of '+q+'.');
+ write(C,L,'a=1');push("A client sends 'a=1' to leader "+nm(L)+'. The leader appends it at index '+C.nodes[L].log.length+' of its own log (still uncommitted) and sends AppendEntries to the followers it can reach.');
+ g=0;let okc=false;
+ do{const had=C.nodes[L].commit;okc=adv(40);const lastc=C.ev.some(e=>e.k==='commit'&&e.n===L&&true);
+  push(okc?autoSay():'No commit yet.',lastc?qopts(['As soon as the leader appends it to its own log','When a majority (quorum) of nodes have stored it','Only when every node has stored it','As soon as the first follower replies, whatever the cluster size'],1,"Entry 'a=1' is in the leader's log and on the way to followers. When will the leader mark it committed?",'The leader commits an entry once it is stored on a majority of the cluster (here '+q+' of '+N+', counting itself) and it belongs to the leader\'s current term. It never waits for every node.'):null);
+  if(lastc&&C.nodes[L].commit>=2)break}while(++g<6);
+ settle(4);push('The next heartbeat carries the leader\'s commit index, so followers that hold the entry also mark it committed and can apply it to their state machine.');
+ const stale=lg.slice();
+ kill(C,L);C.cut=[];
+ const others=C.nodes.filter(x=>x.alive);
+ stale.forEach((id,i)=>{C.nodes[id].el=0;C.nodes[id].to=3+i*2});
+ others.filter(x=>!stale.includes(x.id)).forEach((x,i)=>{x.el=0;x.to=9+i});
+ push('Leader '+nm(L)+' crashes and the cut link is healed. To illustrate the vote rule, this walkthrough shortens the timers of the stale node'+(stale.length>1?'s':'')+' ('+stale.map(nm).join(', ')+') so they time out first. In real clusters any follower can time out first.');
+ const st1=stale[0];
+ ok=adv(60);{const cand=C.ev.find(e=>e.k==='candidate');
+  push(autoSay()||'No election started.',qopts(['Yes: a higher term always wins','No: nodes with a more up-to-date log deny it','Yes: it timed out first, so it is first in line','Only after the crashed leader returns'],1,nm(st1)+' missed the committed entry (its log is shorter) but its timer fires first and it campaigns. Can it win the election?','Each voter denies a candidate whose log is less up to date (compare last term, then last index). The committed entry is on a majority, so any winning candidate must have it. That is how committed entries survive leader changes.'))}
+ g=0;const preLeader=()=>C.nodes.some(x=>x.alive&&x.role==='L');
+ while(!preLeader()&&g++<14)stepAdv(null,200);
+ const L2=leaderOf(C);
+ settle(5);push('The new leader '+nm(L2)+' holds every committed entry. Its heartbeats bring stale nodes up to date, repairing their logs from the point where they diverge.');
+ revive(C,L);settle(8);
+ push('Old leader '+nm(L)+' restarts as a follower. Heartbeats from '+nm(L2)+' carry a higher term, so it accepts the new leader; its log is now '+C.nodes[L].log.length+' entries.');
+ // partition
+ const minSize=N-q,ids=C.nodes.map(x=>x.id),M=[L2].concat(ids.filter(i=>i!==L2).slice(0,minSize-1)),maj=ids.filter(i=>!M.includes(i));
+ cutSides(C,M);
+ push('Network partition: {'+M.map(nm).join(', ')+'} (minority of '+M.length+', containing leader '+nm(L2)+') is cut from {'+maj.map(nm).join(', ')+'} (majority of '+maj.length+', quorum is '+q+').');
+ write(C,L2,'b=2');push("A client still reaches the old leader "+nm(L2)+" and writes 'b=2'. It is appended at index "+C.nodes[L2].log.length+' in term '+C.nodes[L2].term+' and sent, but only '+M.length+' node(s) can receive it.');
+ const cm=C.nodes[L2].commit;settle(14);
+ push(nm(L2)+' keeps its leader role (this model has no check-quorum) but b=2 stays uncommitted at commit index '+C.nodes[L2].commit+': at most '+M.length+' of '+N+' nodes can store it and quorum is '+q+'.',
+  qopts(['Yes, after the next heartbeat','Yes, once '+nm(L2)+' resends it','No: it can reach only '+M.length+' of '+N+' nodes, fewer than quorum '+q,'Yes, because the leader\'s own copy counts as a majority'],2,'During the partition, can the minority-side leader '+nm(L2)+' commit b=2?','Commit needs '+q+' copies and the minority side has only '+M.length+' nodes. Safety wins over availability: that side cannot make progress.'));
+ g=0;const isMajLeader=()=>C.nodes.some(x=>x.alive&&x.role==='L'&&maj.includes(x.id));
+ while(!isMajLeader()&&g++<14)stepAdv(null,200);
+ const L3=C.nodes.filter(x=>x.role==='L'&&maj.includes(x.id)).map(x=>x.id)[0];
+ if(L3!==undefined){write(C,L3,'b=3');push("A client writes 'b=3' to the majority-side leader "+nm(L3)+' (term '+C.nodes[L3].term+'). Index '+C.nodes[L3].log.length+' is appended there while the old leader holds a different entry at that index.');
+  g=0;do{okc=adv(60);push(autoSay())}while(!C.ev.concat([]).length&&false);
+ }
+ // heal
+ C.cut=[];push('The partition heals: all links work again. The majority side committed b=3; the minority leader still believes it leads term '+C.nodes[L2].term+'.');
+ g=0;while(g++<4){const ok2=adv(40);if(!ok2)break;const had=C.ev.some(e=>e.k==='stepdown');push(ok2?autoSay():'Settling.',had&&!SIM.steps.some(s=>s.predict&&s.predict.tag==='heal')?Object.assign(qopts(['It keeps leading because it has the older log','Its entries b=2 stay and overwrite the others','It steps down, and its uncommitted b=2 is overwritten by the new leader\'s log','The cluster halts until an operator intervenes'],2,'The stale leader '+nm(L2)+' reconnects, holding the uncommitted entry b=2. What happens?','A message with a higher term makes the stale leader step down. The new leader then makes its log match: conflicting uncommitted entries (b=2) are deleted and replaced. Only uncommitted entries can be lost; committed ones never are.'),{tag:'heal'}):null);
+  if(C.ev.some(e=>e.k==='truncate')||g>3)break}
+ settle(10);
+ const same=C.nodes.every(x=>JSON.stringify(x.log)===JSON.stringify(C.nodes[0].log));
+ push('Final state: '+(same?'all '+N+' logs are identical again':'logs are converging')+'. Committed entries a=1 and b=3 survived every leader change; the uncommitted b=2 was discarded.');
+}
+function logHtml(x){return '<div class="log" aria-label="log of '+nm(x.id)+'">'+(x.log.length?x.log.map((e,i)=>'<span class="ent'+(i+1<=x.commit?' c':'')+'" title="index '+(i+1)+', term '+e.term+(i+1<=x.commit?', committed':', uncommitted')+'">'+(i+1)+':t'+e.term+' '+esc(e.cmd)+'</span>').join(''):'<small>(empty log)</small>')+'</div>'}
+function comps(Cv){const alive=Cv.nodes.filter(x=>x.alive).map(x=>x.id),seen={},out=[];
+ for(const a of alive){if(seen[a])continue;const g=[a];seen[a]=1;for(let k=0;k<g.length;k++)for(const b of alive)if(!seen[b]&&!Cv.cut.includes(key(g[k],b))){seen[b]=1;g.push(b)}out.push(g.sort())}
+ return out}
+App.render=(v)=>{
+ const Cv=v.C,q=quorum(Cv.n),mt=Math.max(...Cv.nodes.map(x=>x.term));
+ let h='<div class="kv"><div>Tick<b>'+Cv.tick+'</b></div><div>Highest term<b>'+mt+'</b></div><div>Members N<b>'+Cv.n+'</b></div><div>Quorum floor(N/2)+1<b>'+q+'</b></div><div>Failures tolerated N-quorum<b>'+(Cv.n-q)+'</b></div></div><div class="nodes">';
+ for(const x of Cv.nodes){const role=!x.alive?'DOWN':x.role==='L'?'Leader':x.role==='C'?'Candidate':'Follower';
+  h+='<div class="node '+(!x.alive?'down':x.role==='L'?'leader':x.role==='C'?'cand':'')+'"><div><span class="role">'+nm(x.id)+' '+role+'</span></div><small>term '+x.term+' | voted for '+(x.votedFor<0?'nobody':nm(x.votedFor))+'</small><small>'+(x.alive?(x.role==='L'?'heartbeat in '+Math.max(0,RT.HB-x.hb)+' ticks':'election timer '+Math.max(0,x.to-x.el)+' of '+x.to+' left'):'not running')+' | commit index '+x.commit+'</small>'+(x.role==='C'?'<small>votes: '+x.votes.map(nm).join(', ')+' ('+x.votes.length+'/'+q+')</small>':'')+logHtml(x)+'</div>'}
+ h+='</div><p class="muted">Log chips: index:term command. Solid green border = committed (as known by that node), dashed = uncommitted. Timers are in example ticks.</p>';
+ h+='<h3>Quorum right now</h3><ul>'+(Cv.cut.length?'<li>Cut links: '+Cv.cut.map(k=>k.split('-').map(i=>nm(+i)).join('&ndash;')).join(', ')+'</li>':'<li>All links up.</li>')+comps(Cv).map(g=>'<li>Group {'+g.map(nm).join(', ')+'}: '+g.length+' of quorum '+q+' &rarr; <b class="'+(g.length>=q?'ok':'bad')+'">'+(g.length>=q?'can elect a leader and commit':'cannot commit')+'</b></li>').join('')+'</ul>';
+ h+='<h3>Events in this step</h3><div class="ev"><ul>'+(v.ev.length?v.ev.map(e=>'<li>t'+e.t+': '+esc(e.msg)+'</li>').join(''):'<li class="muted">None.</li>')+'</ul></div>';
+ $('#state').innerHTML=h;
+ const viol=check(Cv);$('#inv').innerHTML='Safety check on this state: '+(viol.length?'<b class="bad">'+esc(viol.join('; '))+'</b>':'<b class="ok">0 violations</b> (one leader per term, committed entries on a quorum, log matching).');
+};
+App.summary=()=>{const Cv=SIM.steps[SIM.idx].view.C;
+ return '<p>Leaders by term: '+Object.keys(Cv.leaders).map(t=>'term '+t+' &rarr; '+nm(Cv.leaders[t])).join('; ')+' (never two in one term).</p><p>Committed entries: '+Object.keys(Cv.ledger).map(i=>'#'+i+' '+esc(Cv.ledger[i].cmd)).join(', ')+'. Safety violations found: '+check(Cv).length+'.</p>'};
+App.rebuild=()=>{build();fillSel()};
+function fillSel(){const o=Array.from({length:cfg.n},(_,i)=>'<option value="'+i+'">'+nm(i)+'</option>').join('');
+ for(const id of ['tnode','lA','lB'])$('#'+id).innerHTML=o;$('#lB').value=1;$('#wnode').innerHTML='<option value="-1">current leader</option>'+o}
+function cur(){return clone(SIM.idx>=0?SIM.steps[SIM.idx].view.C:SIM.init.C)}
+function userAct(fn){
+ pause();hideQuiz();const Cn=cur();Cn.rec=true;Cn.ev=[];
+ const keep=SIM.idx+1;SIM.steps.length=keep;for(const k of Object.keys(SIM.answers))if(+k>=keep)delete SIM.answers[k];
+ const say=fn(Cn);SIM.steps.push({say,view:{C:clone(Cn),ev:Cn.ev.slice()},predict:null});SIM.idx=keep;render()}
+function runTo(Cn,cap){for(let i=0;i<cap;i++){tick(Cn);if(Cn.ev.some(e=>SIG.includes(e.k)))return true}return false}
+const sel=i=>+$('#'+i).value;
+$('#bKill').onclick=()=>userAct(c=>{if(!c.nodes[sel('tnode')].alive)return nm(sel('tnode'))+' is already down.';kill(c,sel('tnode'));return 'You crashed '+nm(sel('tnode'))+'. Use Run to next event to watch the cluster react.'});
+$('#bRevive').onclick=()=>userAct(c=>{if(c.nodes[sel('tnode')].alive)return nm(sel('tnode'))+' is already running.';revive(c,sel('tnode'));return 'You restarted '+nm(sel('tnode'))+'.'});
+$('#bCut').onclick=()=>userAct(c=>{const a=sel('lA'),b=sel('lB');if(a===b)return 'Pick two different nodes.';const k=key(a,b);if(!c.cut.includes(k))c.cut.push(k);return 'You cut the link '+nm(a)+' to '+nm(b)+'. Messages between them are dropped.'});
+$('#bHeal').onclick=()=>userAct(c=>{const a=sel('lA'),b=sel('lB'),i=c.cut.indexOf(key(a,b));if(i>=0)c.cut.splice(i,1);return 'You restored the link '+nm(a)+' to '+nm(b)+'.'});
+$('#bHealAll').onclick=()=>userAct(c=>{c.cut=[];return 'You restored every link.'});
+$('#bWrite').onclick=()=>userAct(c=>{let id=sel('wnode');if(id<0)id=leaderOf(c);c.seq++;const cmd=($('#wcmd').value||'k=v').slice(0,12);
+ if(id<0||!write(c,id,cmd))return 'No running leader to accept the write'+(id>=0?' ('+nm(id)+' is not a leader)':'')+'; a real client would retry.';return c.ev.map(e=>e.msg).join(' ')});
+$('#bAdv').onclick=()=>userAct(c=>runTo(c,200)?c.ev.filter(e=>SIG.includes(e.k)).map(e=>e.msg).join(' '):'Nothing notable happened in 200 ticks.');
+$('#bTicks').onclick=()=>userAct(c=>{for(let i=0;i<10;i++)tick(c);return '10 ticks passed (now tick '+c.tick+').'});
+$('#ncount').onchange=()=>{cfg.n=+$('#ncount').value;reset()};
+$('#seed').onchange=()=>{cfg.seed=Math.max(1,Math.floor(+$('#seed').value)||1);reset()};
+(function(){const r=[];for(let n=1;n<=7;n++){const q=quorum(n);r.push('<tr'+(n===4?' class="hl"':'')+'><td>'+n+'</td><td>floor('+n+'/2)+1 = '+q+'</td><td>'+n+' - '+q+' = '+(n-q)+'</td><td>'+({1:'no fault tolerance',2:'worse than 1: both must be up',3:'common etcd size',4:'tolerates the same as 3, one more member to pay for',5:'common etcd size, survives 2',6:'tolerates the same as 5',7:'upper end of etcd guidance'}[n])+'</td></tr>')}
+ $('#qtab').innerHTML=r.join('')})();
+reset();
+
+</script></body></html>

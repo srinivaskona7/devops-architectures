@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SLO and burn rate simulator</title>
+<meta name="sim:title" content="SLO and burn rate simulator">
+<meta name="sim:topic" content="07-monitoring-alerting">
+<meta name="sim:summary" content="Set an availability SLO, compose dependencies, paint an error spike and see which Google SRE Workbook multiwindow burn-rate alerts fire and how much budget is consumed.">
+<meta name="sim:concepts" content="slo,error budget,burn rate,multiwindow alerting,availability,serial composition,parallel redundancy,promql,sre workbook">
+<script>(function(){var t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+document.documentElement.setAttribute('data-theme',t)})();</script>
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--okbg:#e3f4ea;--bad:#a8231b;--badbg:#fde8e6;--warn:#8a5200;--warnbg:#fff1d6;--info:#0b5cad;--infobg:#e4effb;--na:#5d6772;--nabg:#eceff2;--focus:#7a3cff}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#a2adba;--card:#171d24;--border:#323d4a;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#58d08c;--okbg:#12301f;--bad:#ff8f86;--badbg:#3a1613;--warn:#f2b552;--warnbg:#3a2a0c;--info:#7bb8f7;--infobg:#14283d;--na:#a2adba;--nabg:#222a33;--focus:#b79bff}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent)}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 240px;min-width:0}
+a.back{display:inline-flex;align-items:center;min-height:36px}
+main{max-width:1200px;margin:0 auto;padding:12px 14px 40px;min-width:0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:12px 0;min-width:0}
+.card h2{font-size:1.02rem;margin:0 0 8px}
+.card h3{font-size:.95rem;margin:10px 0 4px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bar label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+button,select,input{font:inherit;color:var(--fg)}
+.btn{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btn:hover{border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible,canvas:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+select,input[type=text],input[type=number]{min-height:38px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);width:100%;max-width:100%}
+input[type=checkbox]{width:20px;height:20px}
+.chip{display:inline-block;padding:3px 10px;border-radius:999px;border:1px solid var(--border);background:var(--nabg);font-size:.85rem}
+#say{margin:10px 0 0;padding:10px 12px;border-left:4px solid var(--accent);background:var(--infobg);border-radius:6px;font-weight:600;overflow-wrap:anywhere}
+#quiz{margin:10px 0 0;padding:10px 12px;border:2px solid var(--accent);border-radius:8px;background:var(--card)}
+#quiz .opts{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+#quiz .opts button{min-height:42px;text-align:left;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);cursor:pointer}
+#quiz .opts button:hover{border-color:var(--accent)}
+#fb{margin:8px 0 0;font-size:.92rem;overflow-wrap:anywhere}
+#fb.good{color:var(--ok)}#fb.badc{color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:12px}
+.f{display:flex;flex-direction:column;gap:3px;margin:6px 0;min-width:0}
+.f>span,.f>label{font-size:.82rem;color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row>*{min-width:0}
+.mini{border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-width:0}
+.mini h3{margin-top:0}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
+.nd{flex:1 1 150px;min-width:0;max-width:100%;border:2px solid var(--border);border-radius:8px;padding:6px 8px;font-size:.85rem;background:var(--nabg);opacity:.5;overflow-wrap:anywhere}
+.nd b{display:block}
+.nd .bd{display:inline-block;margin-top:3px;font-size:.72rem;font-weight:700;letter-spacing:.02em}
+.nd.rev{opacity:1}
+.nd.s-ok{border-color:var(--ok);background:var(--okbg)}.nd.s-ok .bd{color:var(--ok)}
+.nd.s-impl{border-color:var(--warn);background:var(--warnbg)}.nd.s-impl .bd{color:var(--warn)}
+.nd.s-expl{border-color:var(--bad);background:var(--badbg)}.nd.s-expl .bd{color:var(--bad)}
+.nd.s-info{border-color:var(--info);background:var(--infobg)}.nd.s-info .bd{color:var(--info)}
+.nd.s-na{border-color:var(--na);background:var(--nabg)}.nd.s-na .bd{color:var(--na)}
+.nd.cur{outline:3px solid var(--focus);outline-offset:1px}
+ol.trace{margin:8px 0 0;padding-left:22px}ol.trace li{margin:4px 0;overflow-wrap:anywhere}
+.t-ok{color:var(--ok)}.t-impl{color:var(--warn)}.t-expl{color:var(--bad)}.t-info{color:var(--info)}.t-na{color:var(--na)}
+.kv{list-style:none;margin:0;padding:0}.kv li{padding:4px 0;border-bottom:1px dashed var(--border);overflow-wrap:anywhere}
+.kv li:last-child{border-bottom:0}
+pre.code,code.blk{display:block;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:var(--nabg);border:1px solid var(--border);border-radius:6px;padding:8px;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;margin:6px 0}
+.math{font:13px/1.55 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere;margin:2px 0}
+.note{font-size:.88rem;color:var(--muted)}
+canvas{width:100%;display:block;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+details{margin:6px 0}summary{cursor:pointer;min-height:36px;display:flex;align-items:center;font-weight:600}
+@media (prefers-reduced-motion:no-preference){.nd{transition:opacity .25s,background .25s}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style></head><body>
+<header class="top"><a class="back" href="../index.html">← Back to curriculum</a><h1>SLO and burn rate simulator</h1><button class="btn" id="btnTheme" aria-label="Toggle light or dark theme">◐ Theme</button></header>
+<main>
+<section class="card" aria-label="Simulator controls">
+<div class="bar" role="toolbar" aria-label="Playback controls">
+<button class="btn" id="btnBack" aria-label="Back one step">◀ Back</button>
+<button class="btn pri" id="btnPlay" aria-label="Play or pause the walkthrough">▶ Play</button>
+<button class="btn" id="btnStep" aria-label="Step forward one step">Step ▶</button>
+<button class="btn" id="btnReset" aria-label="Reset the walkthrough">↺ Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed" style="width:auto"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predictToggle" checked aria-label="Predict first"> Predict first</label>
+<span class="chip" id="score">Score 0/0</span><span class="chip" id="stepno">Step 0/0</span>
+</div>
+<div id="say" role="status" aria-live="polite">Press Step or Play to begin.</div>
+<div id="quiz" hidden role="group" aria-label="Prediction question"><strong>Predict first: what happens next?</strong><p></p><div class="opts"></div></div>
+<div id="fb" aria-live="polite"></div>
+<p class="note">Keyboard: Space = play/pause, ← = back, → = step, R = reset (when focus is not in a form field).</p>
+</section>
+
+<section class="card"><h2>1. Error budget for an availability SLO (30-day window)</h2>
+<div class="grid"><div>
+<div class="f"><label for="slo">Availability SLO (%)</label><select id="slo" aria-label="Availability SLO percent"><option>99</option><option>99.5</option><option selected>99.9</option><option>99.95</option><option>99.99</option><option>99.999</option></select></div>
+<div class="math" id="budgetMath"></div></div>
+<div style="overflow-x:auto;min-width:0"><table id="budgetTable" aria-label="Allowed downtime per SLO"><thead><tr><th>SLO</th><th>Budget (1 − SLO)</th><th>Allowed downtime / 30 d</th></tr></thead><tbody></tbody></table></div></div>
+<p class="note">Example figures. Window = 30 d × 24 h × 60 min = 43 200 min = 2 592 000 s.</p></section>
+
+<section class="card"><h2>2. Composition: chained and redundant dependencies</h2>
+<div class="grid">
+<div class="f"><label for="chain">Serial chain: availabilities in % (comma separated)</label><input type="text" id="chain" value="99.95, 99.9, 99.99" aria-label="Serial chain availabilities" autocomplete="off"></div>
+<div class="f"><label for="repA">Replicated tier: availability of one replica (%)</label><input type="number" id="repA" value="99" min="0" max="100" step="0.01" aria-label="Replica availability"></div>
+<div class="f"><label for="repN">Replicas (parallel, any one is enough)</label><input type="number" id="repN" value="2" min="1" max="10" step="1" aria-label="Number of replicas"></div></div>
+<div class="math" id="compMath"></div></section>
+
+<section class="card"><h2>3. Try it: paint an error-rate spike</h2>
+<div class="grid">
+<div class="f"><label for="preset">Preset</label><select id="preset" aria-label="Spike preset"><option value="fast">Fast burn: 2 % errors for 1 h</option><option value="slow">Slow burn: 0.4 % errors for 24 h</option><option value="blip">Blip: 5 % errors for 5 min</option><option value="mid">Medium: 0.8 % errors for 6 h</option><option value="none">No spike (clear)</option></select></div>
+<div class="f"><label for="base">Baseline error rate (%)</label><input type="number" id="base" value="0.01" min="0" max="100" step="0.01" aria-label="Baseline error rate percent"></div>
+<div class="f"><label for="spStart">Spike start (hour from 0 to 120)</label><input type="number" id="spStart" value="80" min="0" max="119" step="0.5" aria-label="Spike start hour"></div>
+<div class="f"><label for="spDur">Duration (minutes)</label><input type="number" id="spDur" value="60" min="5" max="7200" step="5" aria-label="Spike duration minutes"></div>
+<div class="f"><label for="spRate">Error rate in spike (%)</label><input type="number" id="spRate" value="2" min="0" max="100" step="0.05" aria-label="Spike error rate percent"></div>
+<div class="f"><label for="ymax">Chart height (max error rate)</label><select id="ymax" aria-label="Chart maximum"><option value="0.5">0.5 %</option><option value="2" selected>2 %</option><option value="10">10 %</option><option value="50">50 %</option><option value="100">100 %</option></select></div>
+<div class="f"><label for="mode">Pointer mode on chart</label><select id="mode" aria-label="Pointer mode"><option value="paint">Paint errors</option><option value="erase">Erase to baseline</option></select></div></div>
+<div class="row"><button class="btn" id="spApply" aria-label="Apply spike to the chart">Apply spike</button><button class="btn" id="spClear" aria-label="Clear painted errors">Clear painting</button></div>
+<p class="note">Drag on the chart to paint (or erase) the error rate; vertical position sets the rate. The x axis is 5 days at 5-minute resolution. Traffic is assumed constant, so error rate and fraction of bad minutes are interchangeable.</p>
+<canvas id="cv" height="240" role="img" aria-label="Error rate over 5 days. Drag to paint a spike." style="touch-action:none;cursor:crosshair"></canvas>
+<p class="note" id="legend"></p></section>
+
+<section class="card"><h2>Live state</h2><div id="stateCard">
+<ul class="kv" id="stList"></ul>
+<div style="overflow-x:auto;min-width:0"><table id="ruleTable" aria-label="Alert rules at the cursor"><thead><tr><th>Rule</th><th>Long window</th><th>Short window</th><th>State</th></tr></thead><tbody></tbody></table></div>
+<h3>Arithmetic at the cursor</h3><div class="math" id="stMath"></div></div></section>
+
+<section class="card" id="summary" hidden aria-live="polite"></section>
+
+<section class="card"><h2>Multiwindow, multi-burn-rate rules (Google SRE Workbook)</h2>
+<p class="note">An alert fires when burn rate over the long window and over the short window both exceed the threshold. Burn rate = observed error rate ÷ (1 − SLO). Budget consumed by a long window = burn × window ÷ 30 d.</p>
+<div style="overflow-x:auto;min-width:0"><table id="defTable" aria-label="Rule definitions"><thead><tr><th>Severity</th><th>Burn rate</th><th>Long / short</th><th>Budget consumed</th><th>Error-rate threshold</th></tr></thead><tbody></tbody></table></div>
+<h3>PromQL-style expression (plain text, for the selected SLO)</h3><pre class="code" id="promql"></pre></section>
+
+<section class="card"><h2>Simplifications</h2><ul class="note">
+<li>All numbers are examples: availability targets, replica counts, error rates and the 5-day synthetic series are illustrative, not measurements of any real service.</li>
+<li>Traffic is constant, so the error ratio is the plain mean of 5-minute error rates; real alerts divide error counts by request counts, which weights busy periods more.</li>
+<li>Rules are evaluated every 5 minutes with no “for:” delay, no alert resolution or routing, and are not evaluated until the long window has a full set of samples.</li>
+<li>The budget counts only the painted series (5 days) inside a 30-day window with no other errors; “time to exhaustion” assumes the current 1-hour burn rate continues.</li>
+<li>Composition assumes independent failures (no shared dependencies, no correlated outages, perfect failover). Serial availability = product of availabilities; parallel = 1 − product of (1 − availability).</li>
+<li>Only availability SLOs over a fixed 30-day window are covered; rolling vs calendar windows, latency SLOs and error-budget policies are not modelled. Thresholds follow the Workbook table; a strict “greater than” comparison is used.</li></ul></section>
+<style>table{border-collapse:collapse;width:100%;font-size:.86rem}th,td{border:1px solid var(--border);padding:4px 6px;text-align:left;overflow-wrap:anywhere}th{background:var(--nabg)}tr.sel td{background:var(--infobg);font-weight:600}.fire{color:var(--bad);font-weight:700}.sil{color:var(--ok)}</style>
+
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,playing:false,timer:null,fb:'',fbc:'',initSay:'Press Step or Play to begin.'};
+function stopPlay(){SIM.playing=false;clearInterval(SIM.timer);SIM.timer=null;$('#btnPlay').textContent='▶ Play'}
+function schedule(){clearInterval(SIM.timer);SIM.timer=setInterval(()=>SIM.next(),1800/parseFloat($('#speed').value))}
+SIM.setSteps=function(steps){stopPlay();SIM.steps=steps;SIM.idx=-1;SIM.answers={};SIM.pending=null;SIM.fb='';SIM.fbc='';render()};
+SIM.next=function(){
+  if(SIM.pending!==null)return;
+  if(SIM.idx>=SIM.steps.length-1){stopPlay();return}
+  const n=SIM.idx+1,s=SIM.steps[n];
+  if(s.predict&&$('#predictToggle').checked&&!(n in SIM.answers)){stopPlay();SIM.pending=n;SIM.fb='';render();const b=$('#quiz .opts button');if(b)b.focus();return}
+  SIM.idx=n;if(SIM.idx>=SIM.steps.length-1)stopPlay();render()};
+SIM.answer=function(k){
+  const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict,ok=k===p.correct;
+  SIM.answers[n]={pick:k,ok:ok};SIM.pending=null;SIM.idx=n;
+  SIM.fb=(ok?'✓ Correct. ':'✗ Not quite. ')+'You chose “'+p.opts[k]+'”; the answer is “'+p.opts[p.correct]+'”. '+p.why;SIM.fbc=ok?'good':'badc';
+  if(SIM.idx>=SIM.steps.length-1)stopPlay();render()};
+SIM.back=function(){stopPlay();if(SIM.pending!==null){SIM.pending=null;render();return}if(SIM.idx>=0){SIM.idx--;SIM.fb='';render()}};
+SIM.reset=function(){stopPlay();SIM.pending=null;SIM.answers={};SIM.idx=-1;SIM.fb='';SIM.fbc='';render()};
+SIM.togglePlay=function(){
+  if(SIM.playing){stopPlay();return}
+  if(SIM.pending!==null)return;
+  if(SIM.idx>=SIM.steps.length-1)SIM.reset();
+  SIM.playing=true;$('#btnPlay').textContent='⏸ Pause';SIM.next();if(SIM.playing)schedule()};
+function render(){
+  const n=SIM.steps.length,i=SIM.idx,a=Object.keys(SIM.answers).length,r=Object.values(SIM.answers).filter(x=>x.ok).length;
+  $('#score').textContent='Score '+r+'/'+a;$('#stepno').textContent='Step '+(i+1)+'/'+n;
+  $('#say').textContent=i<0?SIM.initSay:SIM.steps[i].say;
+  const q=$('#quiz');
+  if(SIM.pending!==null){const p=SIM.steps[SIM.pending].predict;q.hidden=false;q.querySelector('p').textContent=p.q;
+    q.querySelector('.opts').innerHTML=p.opts.map((o,k)=>'<button type="button" data-k="'+k+'" aria-label="Answer: '+esc(o)+'">'+esc(o)+'</button>').join('');
+    q.querySelectorAll('.opts button').forEach(b=>b.onclick=()=>SIM.answer(+b.dataset.k))}else{q.hidden=true;q.querySelector('.opts').innerHTML=''}
+  const fb=$('#fb');fb.textContent=SIM.fb;fb.className=SIM.fbc;
+  const sm=$('#summary');
+  if(i>=n-1&&n>0&&SIM.pending===null){sm.hidden=false;
+    let h='<h2>Summary</h2>'+(SIM.summaryHtml?SIM.summaryHtml():'');
+    if(a===0)h+='<p>No predictions were answered (turn on “Predict first” and run again to be scored).</p>';
+    else{h+='<p><b>Prediction score: '+r+' / '+a+'</b></p><ul>';
+      SIM.steps.forEach((s,k)=>{const x=SIM.answers[k];if(x)h+='<li>'+(x.ok?'✓ ':'✗ ')+esc(s.predict.q)+' — you: <i>'+esc(s.predict.opts[x.pick])+'</i>; answer: <i>'+esc(s.predict.opts[s.predict.correct])+'</i>. '+esc(s.predict.why)+'</li>'});h+='</ul>'}
+    sm.innerHTML=h}else{sm.hidden=true;sm.innerHTML=''}
+  $('#btnBack').disabled=!(i>=0||SIM.pending!==null);
+  if(SIM.draw)SIM.draw()}
+$('#btnStep').onclick=()=>SIM.next();$('#btnBack').onclick=()=>SIM.back();$('#btnReset').onclick=()=>SIM.reset();$('#btnPlay').onclick=()=>SIM.togglePlay();
+$('#speed').onchange=()=>{if(SIM.playing)schedule()};
+$('#predictToggle').onchange=()=>{if(!$('#predictToggle').checked&&SIM.pending!==null){SIM.pending=null;SIM.next()}};
+$('#btnTheme').onclick=()=>{const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('dop:theme',t)}catch(e){}render()};
+document.addEventListener('keydown',e=>{
+  const t=e.target,tag=t.tagName;if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA'||e.ctrlKey||e.metaKey||e.altKey)return;
+  if(e.key===' '||e.code==='Space'){e.preventDefault();SIM.togglePlay()}
+  else if(e.key==='ArrowRight'){e.preventDefault();SIM.next()}
+  else if(e.key==='ArrowLeft'){e.preventDefault();SIM.back()}
+  else if(e.key==='r'||e.key==='R'){SIM.reset()}});
+document.addEventListener('keyup',e=>{const t=e.target;if((e.key===' '||e.code==='Space')&&t.tagName==='BUTTON')e.preventDefault()});
+
+
+const TICK=5,N=1440,WIN_MIN=43200;
+const RULES=[{id:'r1',sev:'Page',burn:14.4,lh:1,sh:5/60,lt:12,st:1,lbl:'1 h',sl:'5 m'},{id:'r2',sev:'Page',burn:6,lh:6,sh:.5,lt:72,st:6,lbl:'6 h',sl:'30 m'},{id:'r3',sev:'Ticket',burn:3,lh:24,sh:2,lt:288,st:24,lbl:'1 d',sl:'2 h'},{id:'r4',sev:'Ticket',burn:1,lh:72,sh:6,lt:864,st:72,lbl:'3 d',sl:'6 h'}];
+RULES.forEach(r=>{r.pct=r.burn*r.lh/720*100;r.name=r.sev+': '+r.burn+'x over '+r.lbl+' / '+r.sl});
+const EPS=1e-9;
+/* exact budget arithmetic in integers: SLO scaled by 1000 */
+function sloInt(s){return Math.round(parseFloat(s)*1000)}
+function budget(sloStr){const P=sloInt(sloStr),x=100000-P;/* (1-SLO)=x/100000 */
+  const min1000=432*x;/* minutes*1000 */const sec100=2592*x;/* seconds*100 */
+  return{P,x,frac:x/100000,minutes:min1000/1000,seconds:sec100/100,min1000,sec100}}
+function trim(n,d){let s=n.toFixed(d);if(s.indexOf('.')>=0)s=s.replace(/0+$/,'').replace(/\.$/,'');return s}
+function hms(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec-h*3600-m*60;return(h?h+' h ':'')+(h||m?m+' min ':'')+trim(s,2)+' s'}
+function fmtMin(m){return trim(m,3)+' min'}
+function fmtPct(v,d){return trim(v*100,d)+' %'}
+function fmtDur(min){if(!isFinite(min))return 'never';if(min<90)return trim(min,1)+' min';const h=min/60;if(h<48)return trim(h,2)+' h';return trim(h/24,2)+' d'}
+/* composition */
+function parseChain(t){return t.split(',').map(s=>parseFloat(s.trim())).filter(v=>isFinite(v)&&v>=0&&v<=100)}
+function serial(a){return a.reduce((p,v)=>p*v/100,1)}
+function parallel(a,n){return 1-Math.pow(1-a/100,n)}
+/* model */
+let paint=new Array(N).fill(null);
+const M={e:[],pre:[],fire:{},first:{},maxBurn:{}};
+function series(){const b=parseFloat($('#base').value)/100||0;return paint.map(v=>v===null?b:v)}
+function mean(t,k){return(M.pre[t+1]-M.pre[t+1-k])/k}
+function model(){
+  const B=budget($('#slo').value);M.B=B;M.e=series();M.pre=[0];M.e.forEach(v=>M.pre.push(M.pre[M.pre.length-1]+v));
+  RULES.forEach(r=>{M.fire[r.id]=new Array(N).fill(false);M.first[r.id]=-1;M.maxBurn[r.id]=0;
+    for(let t=r.lt-1;t<N;t++){const bl=mean(t,r.lt)/B.frac,bs=mean(t,r.st)/B.frac;M.maxBurn[r.id]=Math.max(M.maxBurn[r.id],bl);
+      if(bl>r.burn+EPS&&bs>r.burn+EPS){M.fire[r.id][t]=true;if(M.first[r.id]<0)M.first[r.id]=t}}});
+  let pk=0;M.e.forEach((v,i)=>{if(v>M.e[pk])pk=i});M.peak=pk;M.peakE=M.e[pk];M.peakBurn=M.peakE/B.frac;
+  M.total=M.pre[N]*TICK;/* bad-minute equivalents */M.consumedAll=M.total/(WIN_MIN*B.frac);
+  M.chain=parseChain($('#chain').value);M.serialA=serial(M.chain);
+  M.repA=parseFloat($('#repA').value)||0;M.repN=Math.max(1,Math.round(parseFloat($('#repN').value)||1));M.parA=parallel(M.repA,M.repN);M.combA=M.serialA*M.parA}
+/* UI static */
+function staticUI(){
+  $('#budgetTable tbody').innerHTML=['99','99.5','99.9','99.95','99.99','99.999'].map(s=>{const b=budget(s);return'<tr data-s="'+s+'"><td>'+s+' %</td><td>'+trim(b.frac*100,3)+' %</td><td>'+fmtMin(b.minutes)+' ('+hms(b.seconds)+')</td></tr>'}).join('');
+  $('#defTable tbody').innerHTML=RULES.map(r=>'<tr><td>'+r.sev+'</td><td>'+r.burn+'</td><td>'+r.lbl+' / '+r.sl+'</td><td>'+r.burn+' × '+r.lh+' h ÷ 720 h = '+trim(r.pct,2)+' %</td><td class="thr" data-r="'+r.id+'"></td></tr>').join('')}
+function budgetUI(){const B=M.B,s=$('#slo').value;
+  document.querySelectorAll('#budgetTable tr[data-s]').forEach(tr=>tr.classList.toggle('sel',tr.dataset.s===s));
+  $('#budgetMath').innerHTML=['Window: 30 × 24 × 60 = 43 200 min','Budget fraction: 1 − '+s+' / 100 = '+trim(B.frac,5)+' ('+trim(B.frac*100,3)+' %)','Allowed downtime: 43 200 × '+trim(B.frac,5)+' = <b>'+fmtMin(B.minutes)+'</b> = '+hms(B.seconds)].map(x=>'<div>'+x+'</div>').join('');
+  RULES.forEach(r=>{const c=document.querySelector('.thr[data-r="'+r.id+'"]');c.textContent=r.burn+' × '+trim(B.frac,5)+' = '+trim(r.burn*B.frac*100,4)+' %'});
+  const f=r=>'sum(rate(http_requests_total{code=~"5.."}['+r+']))\n    / sum(rate(http_requests_total['+r+']))';
+  $('#promql').textContent='# error budget = 1 - '+trim(1-B.frac,5)+' = '+trim(B.frac,5)+'\n'+RULES.map(r=>'# '+r.name+'  (threshold '+r.burn+' * '+trim(B.frac,5)+' = '+trim(r.burn*B.frac,6)+')\n(\n  '+f(r.lbl.replace(' ','').replace('d','d'))+'\n    > '+r.burn+' * '+trim(B.frac,5)+'\n  and\n  '+f(r.sl.replace(' ',''))+'\n    > '+r.burn+' * '+trim(B.frac,5)+'\n)').join('\nor\n');
+  $('#legend').textContent='Dashed lines: error rate that equals each burn rate for the '+s+' % SLO (14.4×, 6×, 3×, 1× of '+trim(B.frac*100,3)+' %). Triangles mark when each alert first fires.'}
+function compUI(){const c=M.chain;
+  if(!c.length){$('#compMath').textContent='Enter at least one availability between 0 and 100.';return}
+  const dt=a=>fmtDur((1-a)*WIN_MIN);const pc=a=>trim(a*100,6)+' %';
+  const L=['Serial: '+c.map(v=>v+' %').join(' × ')+' = <b>'+pc(M.serialA)+'</b> → downtime / 30 d ≈ '+dt(M.serialA)+' (weakest link alone: '+Math.min(...c)+' %)',
+   'Parallel: 1 − (1 − '+M.repA/100+')^'+M.repN+' = 1 − '+trim(Math.pow(1-M.repA/100,M.repN),10)+' = <b>'+pc(M.parA)+'</b> → ≈ '+dt(M.parA),
+   'Chain × replicated tier: '+pc(M.serialA)+' × '+pc(M.parA)+' = <b>'+pc(M.combA)+'</b> → ≈ '+dt(M.combA),
+   'Compared with the '+$('#slo').value+' % SLO: '+(M.combA*100>=parseFloat($('#slo').value)-1e-12?'meets it':'<b>falls short</b> of it')+' (needs '+$('#slo').value+' %, composite is '+pc(M.combA)+')'];
+  $('#compMath').innerHTML=L.map(x=>'<div>'+x+'</div>').join('')}
+/* steps */
+const hr=t=>trim(t*TICK/60,2);
+function numOpts(c,f){if(!(c>0))return{opts:['0','1','10','100'].map(x=>x),correct:0};const o=[c*10,c,c/10,c*2];return{opts:o.map(f),correct:1}}
+function buildSteps(){
+  const B=M.B,s=$('#slo').value,st=[];
+  const fires=RULES.filter(r=>M.first[r.id]>=0).sort((a,b)=>M.first[a.id]-M.first[b.id]);
+  const silent=RULES.filter(r=>M.first[r.id]<0);
+  let o=numOpts(B.minutes,fmtMin);
+  st.push({t:0,say:'SLO '+s+' % over 30 days leaves an error budget of '+trim(B.frac*100,3)+' %, which is 43 200 × '+trim(B.frac,5)+' = '+fmtMin(B.minutes)+' of downtime.',predict:{q:'How much total downtime does a '+s+' % SLO allow in a 30-day window?',opts:o.opts,correct:o.correct,why:'Allowed downtime = window × (1 − SLO) = 43 200 min × '+trim(B.frac,5)+' = '+fmtMin(B.minutes)+'.'}});
+  const chainTxt=M.chain.length?M.chain.join('% × ')+'%':'(empty)';
+  const minC=M.chain.length?Math.min(...M.chain):100,worse=M.serialA*100<minC-1e-12;
+  st.push({t:0,say:'A serial chain multiplies availabilities ('+chainTxt+' = '+trim(M.serialA*100,6)+' %), while '+M.repN+' replicas at '+M.repA+' % give 1 − (1 − '+M.repA/100+')^'+M.repN+' = '+trim(M.parA*100,6)+' %.',
+    predict:{q:'A serial chain of '+M.chain.length+' dependencies is compared with its weakest single component. The chain availability is…',opts:['Higher than the weakest component','Equal to the weakest component','Lower than the weakest component'],correct:worse?2:1,why:'Serial availability is the product of the terms, each at most 1, so it cannot exceed the weakest link: '+trim(M.serialA*100,6)+' % versus '+minC+' %.'}});
+  o=numOpts(M.peakBurn,v=>trim(v,2)+'x');
+  st.push({t:M.peak,say:M.peakE>0?'Peak error rate '+trim(M.peakE*100,3)+' % at hour '+hr(M.peak)+' gives burn rate '+trim(M.peakE*100,3)+' % ÷ '+trim(B.frac*100,3)+' % = '+trim(M.peakBurn,2)+'x; at that rate a full budget lasts '+fmtDur(WIN_MIN/Math.max(M.peakBurn,1e-12))+'.':'There are no errors at all, so every burn rate is 0.',
+    predict:{q:'The highest 5-minute error rate is '+trim(M.peakE*100,3)+' % and the budget fraction is '+trim(B.frac*100,3)+' %. What is the burn rate at the peak?',opts:o.opts,correct:o.correct,why:'Burn rate = error rate ÷ (1 − SLO) = '+trim(M.peakE*100,3)+' % ÷ '+trim(B.frac*100,3)+' % = '+trim(M.peakBurn,2)+'x.'}});
+  const names=RULES.map(r=>r.name).concat(['No alert fires']);
+  const fq=fires.length?RULES.indexOf(fires[0]):4;
+  const q4={q:'Over the painted series, which alert fires first (or none)?',opts:names,correct:fq,why:fires.length?fires[0].name+' fires first, at hour '+hr(M.first[fires[0].id])+': both its long and short windows exceed '+fires[0].burn+'x.':'No rule has both its long and short window above its threshold, so all stay silent.'};
+  fires.forEach((r,i)=>{const t=M.first[r.id],bl=mean(t,r.lt)/B.frac,bs=mean(t,r.st)/B.frac;
+    st.push({t,rule:r.id,say:r.name+' FIRES at hour '+hr(t)+': long burn '+trim(bl,2)+'x and short burn '+trim(bs,2)+'x are both above '+r.burn+'x (consuming '+trim(r.pct,2)+' % of budget if sustained for '+r.lbl+').',predict:i===0?q4:undefined})});
+  if(!fires.length)st.push({t:N-1,say:'All four rules stay silent: no long and short window pair both exceed its burn-rate threshold.',predict:q4});
+  if(silent.length&&fires.length)st.push({t:N-1,say:'Silent rules: '+silent.map(r=>r.burn+'x/'+r.lbl+' (max long burn '+trim(M.maxBurn[r.id],2)+'x)').join('; ')+' - never both above threshold.'});
+  const o5=numOpts(M.consumedAll*100,v=>trim(v,2)+' %');
+  st.push({t:N-1,say:'Budget consumed: sum of errors = '+trim(M.total,3)+' bad-minute equivalents ÷ '+fmtMin(B.minutes)+' = '+trim(M.consumedAll*100,2)+' % of the 30-day budget'+(M.consumedAll>=1?' (exhausted)':'')+'.',
+    predict:{q:'What share of the 30-day error budget did the painted errors consume (all 5 days)?',opts:o5.opts,correct:o5.correct,why:'Σ(error rate × 5 min) = '+trim(M.total,3)+' min ÷ allowed '+fmtMin(B.minutes)+' = '+trim(M.consumedAll*100,2)+' %.'}});
+  return st}
+/* drawing */
+const cv=$('#cv');let ctx2=cv.getContext('2d');
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+const ML=44,MR=8,MT=10,MB=24;
+function geom(){const dpr=window.devicePixelRatio||1,w=cv.clientWidth||300,h=240;if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}ctx2.setTransform(dpr,0,0,dpr,0,0);return{w,h,pw:w-ML-MR,ph:h-MT-MB}}
+function drawChart(t){
+  const g=geom(),c=ctx2,ym=parseFloat($('#ymax').value)/100;c.clearRect(0,0,g.w,g.h);c.font='11px sans-serif';
+  const X=i=>ML+i/(N-1)*g.pw,Y=v=>MT+g.ph-Math.min(v,ym)/ym*g.ph;
+  c.strokeStyle=css('--border');c.fillStyle=css('--muted');c.lineWidth=1;
+  for(let d=0;d<=5;d++){const x=X(Math.min(d*288,N-1));c.beginPath();c.moveTo(x,MT);c.lineTo(x,MT+g.ph);c.stroke();if(d<5)c.fillText('day '+d,x+2,g.h-8)}
+  for(let k=0;k<=4;k++){const v=ym*k/4,y=Y(v);c.beginPath();c.moveTo(ML,y);c.lineTo(ML+g.pw,y);c.stroke();c.fillText(trim(v*100,2)+'%',2,y+4)}
+  c.setLineDash([5,4]);c.strokeStyle=css('--warn');
+  RULES.forEach(r=>{const v=r.burn*M.B.frac;if(v<=ym){const y=Y(v);c.beginPath();c.moveTo(ML,y);c.lineTo(ML+g.pw,y);c.stroke();c.fillStyle=css('--warn');c.fillText(r.burn+'x',ML+g.pw-28,y-3)}});c.setLineDash([]);
+  c.fillStyle=css('--accent');c.strokeStyle=css('--accent');
+  for(let i=0;i<N;i++){const v=M.e[i];if(v>0){const x=X(i),y=Y(v);c.fillRect(x-.5,y,Math.max(1,g.pw/N),MT+g.ph-y)}}
+  RULES.forEach(r=>{const f=M.first[r.id];if(f>=0){const x=X(f);c.fillStyle=css('--bad');c.beginPath();c.moveTo(x,MT+g.ph);c.lineTo(x-6,MT+g.ph+9);c.lineTo(x+6,MT+g.ph+9);c.closePath();c.fill()}});
+  c.strokeStyle=css('--focus');c.lineWidth=2;const cx=X(t);c.beginPath();c.moveTo(cx,MT);c.lineTo(cx,MT+g.ph);c.stroke();c.lineWidth=1}
+function stateUI(t){
+  const B=M.B,e=M.e[t],cons=M.pre[t+1]*TICK/(WIN_MIN*B.frac);
+  const b1=t>=11?mean(t,12)/B.frac:0;const rem=Math.max(0,1-cons);
+  const tte=cons>=1?0:(b1>0?rem*WIN_MIN/b1:Infinity);
+  $('#stList').innerHTML=['Cursor: hour '+hr(t)+' (tick '+t+' of '+(N-1)+')','Error rate now: '+trim(e*100,3)+' %  →  burn = '+trim(e*100,3)+' ÷ '+trim(B.frac*100,3)+' = '+trim(e/B.frac,2)+'x','Budget consumed so far: <b>'+trim(cons*100,2)+' %</b> ('+(cons>=1?'exhausted':'remaining '+trim(rem*100,2)+' %')+')','Time to exhaustion at the 1 h burn rate ('+trim(b1,2)+'x): <b>'+fmtDur(tte)+'</b>'].map(x=>'<li>'+x+'</li>').join('');
+  $('#ruleTable tbody').innerHTML=RULES.map(r=>{const ok=t>=r.lt-1,bl=ok?mean(t,r.lt)/B.frac:0,bs=ok?mean(t,r.st)/B.frac:0,f=M.fire[r.id][t];
+    return'<tr><td>'+r.name+'</td><td>'+trim(bl,2)+'x</td><td>'+trim(bs,2)+'x</td><td class="'+(f?'fire':'sil')+'">'+(f?'FIRING':ok?'silent':'no data yet')+'</td></tr>'}).join('');
+  $('#stMath').innerHTML=RULES.map(r=>{if(t<r.lt-1)return'<div>'+r.lbl+' window: not enough samples yet.</div>';const ml=mean(t,r.lt),ms=mean(t,r.st);
+    return'<div>'+r.burn+'x rule: mean('+r.lbl+') = '+trim(ml*100,4)+' % → '+trim(ml*100,4)+' ÷ '+trim(B.frac*100,3)+' = '+trim(ml/B.frac,3)+'x; mean('+r.sl+') = '+trim(ms*100,4)+' % → '+trim(ms/B.frac,3)+'x; both > '+r.burn+'? '+(M.fire[r.id][t]?'yes → fires':'no → silent')+'</div>'}).join('')}
+SIM.initSay='Set the SLO, paint a spike, then press Step or Play.';
+SIM.draw=function(){if(!M.B)return;const t=SIM.idx<0?0:SIM.steps[SIM.idx].t;drawChart(t);stateUI(t)};
+SIM.summaryHtml=function(){const fires=RULES.filter(r=>M.first[r.id]>=0);return'<p>SLO '+$('#slo').value+' %: budget '+fmtMin(M.B.minutes)+' per 30 d. Alerts fired: <b>'+(fires.length?fires.map(r=>r.burn+'x/'+r.lbl).join(', '):'none')+'</b>. Budget consumed by the painted series: <b>'+trim(M.consumedAll*100,2)+' %</b>.</p><p class="note">Change the SLO or paint a different spike and step again to see which rules react.</p>'};
+function recompute(){model();budgetUI();compUI();SIM.setSteps(buildSteps())}
+/* painting + inputs */
+function applySpike(){const s=Math.round(parseFloat($('#spStart').value)*60/TICK),d=Math.max(1,Math.round(parseFloat($('#spDur').value)/TICK)),v=(parseFloat($('#spRate').value)||0)/100;
+  for(let i=Math.max(0,s);i<Math.min(N,s+d);i++)paint[i]=v}
+function preset(p){paint=new Array(N).fill(null);const m={fast:[2,60],slow:[0.4,1440],blip:[5,5],mid:[0.8,360],none:null}[p];if(m){$('#spRate').value=m[0];$('#spDur').value=m[1];applySpike()}}
+$('#preset').onchange=()=>{preset($('#preset').value);recompute()};
+$('#spApply').onclick=()=>{applySpike();recompute()};
+$('#spClear').onclick=()=>{paint=new Array(N).fill(null);recompute()};
+['slo','base','chain','repA','repN','ymax'].forEach(i=>$('#'+i).addEventListener('input',recompute));
+$('#slo').addEventListener('change',recompute);$('#ymax').addEventListener('change',recompute);
+let drawing=false,last=-1;
+function paintAt(ev){const r=cv.getBoundingClientRect(),g=geom(),x=ev.clientX-r.left,y=ev.clientY-r.top,ym=parseFloat($('#ymax').value)/100;
+  const i=Math.max(0,Math.min(N-1,Math.round((x-ML)/g.pw*(N-1))));const v=Math.max(0,Math.min(ym,(1-(y-MT)/g.ph)*ym));const erase=$('#mode').value==='erase';
+  const a=last<0?i:last,lo=Math.min(a,i),hi=Math.max(a,i);for(let k=lo;k<=hi;k++)paint[k]=erase?null:Math.round(v*1e5)/1e5;last=i;recompute()}
+cv.addEventListener('pointerdown',e=>{drawing=true;last=-1;cv.setPointerCapture(e.pointerId);paintAt(e)});
+cv.addEventListener('pointermove',e=>{if(drawing)paintAt(e)});
+cv.addEventListener('pointerup',()=>{drawing=false;last=-1});cv.addEventListener('pointercancel',()=>{drawing=false;last=-1});
+window.addEventListener('resize',()=>SIM.draw());
+staticUI();preset('fast');recompute();
+
+</script></body></html>

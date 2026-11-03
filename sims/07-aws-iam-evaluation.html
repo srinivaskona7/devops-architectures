@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AWS IAM policy evaluation simulator</title>
+<meta name="sim:title" content="AWS IAM policy evaluation simulator">
+<meta name="sim:topic" content="10-aws">
+<meta name="sim:summary" content="Compose a request and step through AWS IAM policy evaluation (explicit deny, SCP, resource, identity, boundary, session, cross-account) to see which layer allows or blocks it.">
+<meta name="sim:concepts" content="iam,policy evaluation,explicit deny,scp,permissions boundary,session policy,resource-based policy,cross-account,condition keys">
+<script>(function(){var t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+document.documentElement.setAttribute('data-theme',t)})();</script>
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--okbg:#e3f4ea;--bad:#a8231b;--badbg:#fde8e6;--warn:#8a5200;--warnbg:#fff1d6;--info:#0b5cad;--infobg:#e4effb;--na:#5d6772;--nabg:#eceff2;--focus:#7a3cff}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#a2adba;--card:#171d24;--border:#323d4a;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#58d08c;--okbg:#12301f;--bad:#ff8f86;--badbg:#3a1613;--warn:#f2b552;--warnbg:#3a2a0c;--info:#7bb8f7;--infobg:#14283d;--na:#a2adba;--nabg:#222a33;--focus:#b79bff}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent)}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 240px;min-width:0}
+a.back{display:inline-flex;align-items:center;min-height:36px}
+main{max-width:1200px;margin:0 auto;padding:12px 14px 40px;min-width:0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:12px 0;min-width:0}
+.card h2{font-size:1.02rem;margin:0 0 8px}
+.card h3{font-size:.95rem;margin:10px 0 4px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bar label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+button,select,input{font:inherit;color:var(--fg)}
+.btn{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btn:hover{border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible,canvas:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+select,input[type=text],input[type=number]{min-height:38px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);width:100%;max-width:100%}
+input[type=checkbox]{width:20px;height:20px}
+.chip{display:inline-block;padding:3px 10px;border-radius:999px;border:1px solid var(--border);background:var(--nabg);font-size:.85rem}
+#say{margin:10px 0 0;padding:10px 12px;border-left:4px solid var(--accent);background:var(--infobg);border-radius:6px;font-weight:600;overflow-wrap:anywhere}
+#quiz{margin:10px 0 0;padding:10px 12px;border:2px solid var(--accent);border-radius:8px;background:var(--card)}
+#quiz .opts{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+#quiz .opts button{min-height:42px;text-align:left;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);cursor:pointer}
+#quiz .opts button:hover{border-color:var(--accent)}
+#fb{margin:8px 0 0;font-size:.92rem;overflow-wrap:anywhere}
+#fb.good{color:var(--ok)}#fb.badc{color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:12px}
+.f{display:flex;flex-direction:column;gap:3px;margin:6px 0;min-width:0}
+.f>span,.f>label{font-size:.82rem;color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row>*{min-width:0}
+.mini{border:1px solid var(--border);border-radius:8px;padding:8px 10px;min-width:0}
+.mini h3{margin-top:0}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
+.nd{flex:1 1 150px;min-width:0;max-width:100%;border:2px solid var(--border);border-radius:8px;padding:6px 8px;font-size:.85rem;background:var(--nabg);opacity:.5;overflow-wrap:anywhere}
+.nd b{display:block}
+.nd .bd{display:inline-block;margin-top:3px;font-size:.72rem;font-weight:700;letter-spacing:.02em}
+.nd.rev{opacity:1}
+.nd.s-ok{border-color:var(--ok);background:var(--okbg)}.nd.s-ok .bd{color:var(--ok)}
+.nd.s-impl{border-color:var(--warn);background:var(--warnbg)}.nd.s-impl .bd{color:var(--warn)}
+.nd.s-expl{border-color:var(--bad);background:var(--badbg)}.nd.s-expl .bd{color:var(--bad)}
+.nd.s-info{border-color:var(--info);background:var(--infobg)}.nd.s-info .bd{color:var(--info)}
+.nd.s-na{border-color:var(--na);background:var(--nabg)}.nd.s-na .bd{color:var(--na)}
+.nd.cur{outline:3px solid var(--focus);outline-offset:1px}
+ol.trace{margin:8px 0 0;padding-left:22px}ol.trace li{margin:4px 0;overflow-wrap:anywhere}
+.t-ok{color:var(--ok)}.t-impl{color:var(--warn)}.t-expl{color:var(--bad)}.t-info{color:var(--info)}.t-na{color:var(--na)}
+.kv{list-style:none;margin:0;padding:0}.kv li{padding:4px 0;border-bottom:1px dashed var(--border);overflow-wrap:anywhere}
+.kv li:last-child{border-bottom:0}
+pre.code,code.blk{display:block;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:var(--nabg);border:1px solid var(--border);border-radius:6px;padding:8px;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;margin:6px 0}
+.math{font:13px/1.55 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere;margin:2px 0}
+.note{font-size:.88rem;color:var(--muted)}
+canvas{width:100%;display:block;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+details{margin:6px 0}summary{cursor:pointer;min-height:36px;display:flex;align-items:center;font-weight:600}
+@media (prefers-reduced-motion:no-preference){.nd{transition:opacity .25s,background .25s}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style></head><body>
+<header class="top"><a class="back" href="../index.html">← Back to curriculum</a><h1>AWS IAM policy evaluation simulator</h1><button class="btn" id="btnTheme" aria-label="Toggle light or dark theme">◐ Theme</button></header>
+<main>
+<section class="card" aria-label="Simulator controls">
+<div class="bar" role="toolbar" aria-label="Playback controls">
+<button class="btn" id="btnBack" aria-label="Back one step">◀ Back</button>
+<button class="btn pri" id="btnPlay" aria-label="Play or pause the walkthrough">▶ Play</button>
+<button class="btn" id="btnStep" aria-label="Step forward one step">Step ▶</button>
+<button class="btn" id="btnReset" aria-label="Reset the walkthrough">↺ Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed" style="width:auto"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predictToggle" checked aria-label="Predict first"> Predict first</label>
+<span class="chip" id="score">Score 0/0</span><span class="chip" id="stepno">Step 0/0</span>
+</div>
+<div id="say" role="status" aria-live="polite">Press Step or Play to begin.</div>
+<div id="quiz" hidden role="group" aria-label="Prediction question"><strong>Predict first: what happens next?</strong><p></p><div class="opts"></div></div>
+<div id="fb" aria-live="polite"></div>
+<p class="note">Keyboard: Space = play/pause, ← = back, → = step, R = reset (when focus is not in a form field).</p>
+</section>
+
+<section class="card"><h2>1. Choose a scenario</h2>
+<div class="grid"><div class="f"><label for="scn">Ready-made scenario</label><select id="scn" aria-label="Ready-made scenario"></select></div>
+<div><p id="scnDesc" class="note"></p></div></div></section>
+
+<section class="card"><h2>2. Try it: compose the request</h2>
+<div class="grid">
+<div class="f"><label for="ptype">Principal</label><select id="ptype" aria-label="Principal type"><option value="user">IAM user alice</option><option value="role">IAM role session (Deployer)</option></select></div>
+<div class="f"><label for="scope">Account relationship</label><select id="scope" aria-label="Same or cross account"><option value="same">Same account (resource in 111111111111)</option><option value="cross">Cross-account (resource in 222222222222)</option></select></div>
+<div class="f"><label for="action">Action</label><input type="text" id="action" aria-label="Action" autocomplete="off" spellcheck="false"></div>
+<div class="f"><label for="resource">Resource ARN</label><input type="text" id="resource" aria-label="Resource ARN" autocomplete="off" spellcheck="false"></div>
+<div class="f"><label for="ip">Request context: aws:SourceIp</label><input type="text" id="ip" aria-label="Source IP" autocomplete="off" spellcheck="false"></div>
+<div class="f"><label for="tags">Principal tags (key=value, comma separated)</label><input type="text" id="tags" aria-label="Principal tags" autocomplete="off" spellcheck="false"></div>
+</div>
+<p class="note" id="arns"></p></section>
+
+<section class="card"><h2>3. Decision trace</h2>
+<div class="flow" id="flow" aria-label="Decision flow"></div>
+<ol class="trace" id="trace"></ol></section>
+
+<section class="card" id="stateCard"><h2>Live state</h2><div class="grid"><div><h3>Request</h3><ul class="kv" id="stReq"></ul></div><div><h3>Layers (revealed so far)</h3><ul class="kv" id="stLay"></ul></div></div>
+<p><b>Verdict so far:</b> <span class="chip" id="verdict">pending</span></p></section>
+
+<section class="card" id="summary" hidden aria-live="polite"></section>
+
+<section class="card"><h2>4. Try it: edit the policies in each layer</h2>
+<p class="note">Tick a box to attach that layer; edit the JSON to change it. Only the simple grammar described under Simplifications is understood.</p>
+<div class="grid" id="layers"></div></section>
+
+<section class="card"><h2>Evaluation order used here (from the AWS documentation)</h2>
+<ol class="note">
+<li>Default is an implicit deny. Scan every applicable policy for an explicit Deny; one match gives a final Deny.</li>
+<li>SCP (principal's account): needs an Allow, otherwise implicit deny. It limits; it never grants.</li>
+<li>Same account: a resource-based policy that names the IAM user, or the role session, directly grants on its own, even if identity policy, boundary or session policy would implicitly deny. A resource policy that names the role ARN or the account is still limited by the boundary and session policy.</li>
+<li>Identity-based policy needs an Allow (or an Allow from the resource policy as above). Permissions boundary needs an Allow. Session policy (role sessions only, if one was passed) needs an Allow. Boundaries and session policies limit; they never grant.</li>
+<li>Cross-account: two evaluations. The principal's account needs identity-based Allow within its SCP, boundary and session limits; the resource's account needs a resource-based Allow naming the principal. Both must Allow.</li></ol>
+<p class="note">Source: AWS IAM User Guide, “Policy evaluation logic”, “How AWS enforcement code logic evaluates requests…”, “Policy evaluation for requests within a single account” and “Cross-account policy evaluation logic”.</p></section>
+
+<section class="card"><h2>Simplifications</h2><ul class="note">
+<li>Policy grammar is reduced: Effect, Action, Resource, Principal (resource policy only) and Condition. NotAction, NotResource, NotPrincipal, policy variables and multi-value set operators are not supported (such statements are ignored with a warning).</li>
+<li>Condition operators: StringEquals, StringNotEquals, StringLike, StringNotLike, IpAddress, NotIpAddress (IPv4 only). Keys: aws:SourceIp, aws:PrincipalAccount, aws:PrincipalTag/&lt;key&gt;. A missing key makes positive operators false and negated operators true.</li>
+<li>Resource control policies (RCPs), VPC endpoint policies, ACLs, KMS key policies, role trust policies and service-specific rules are not modelled. SCPs are modelled for the principal's account only. One policy per layer.</li>
+<li>Principal "*" in a resource policy is honoured for Deny statements only; a public Allow is ignored with a warning. The account root principal is treated like a role ARN (limited by boundary and session policy).</li>
+<li>The explicit-Deny layer is a stand-alone list of Deny statements applied in the deny scan, standing in for a Deny written in any policy. Deny statements typed into the other layers are also found by the scan.</li>
+<li>The root user, anonymous requests and the authentication step are not covered. The account IDs, ARNs and addresses are examples.</li></ul></section>
+<style>textarea.pol{width:100%;min-height:150px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px;white-space:pre;overflow:auto;resize:vertical}
+.mini .hd{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:space-between}.mini .hd label{display:inline-flex;gap:6px;align-items:center;min-height:36px;font-weight:600}
+.mini.decider{border:2px solid var(--focus)}.warnl{color:var(--warn);font-size:.82rem;overflow-wrap:anywhere}.lst{font-size:.78rem}</style>
+
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,playing:false,timer:null,fb:'',fbc:'',initSay:'Press Step or Play to begin.'};
+function stopPlay(){SIM.playing=false;clearInterval(SIM.timer);SIM.timer=null;$('#btnPlay').textContent='▶ Play'}
+function schedule(){clearInterval(SIM.timer);SIM.timer=setInterval(()=>SIM.next(),1800/parseFloat($('#speed').value))}
+SIM.setSteps=function(steps){stopPlay();SIM.steps=steps;SIM.idx=-1;SIM.answers={};SIM.pending=null;SIM.fb='';SIM.fbc='';render()};
+SIM.next=function(){
+  if(SIM.pending!==null)return;
+  if(SIM.idx>=SIM.steps.length-1){stopPlay();return}
+  const n=SIM.idx+1,s=SIM.steps[n];
+  if(s.predict&&$('#predictToggle').checked&&!(n in SIM.answers)){stopPlay();SIM.pending=n;SIM.fb='';render();const b=$('#quiz .opts button');if(b)b.focus();return}
+  SIM.idx=n;if(SIM.idx>=SIM.steps.length-1)stopPlay();render()};
+SIM.answer=function(k){
+  const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict,ok=k===p.correct;
+  SIM.answers[n]={pick:k,ok:ok};SIM.pending=null;SIM.idx=n;
+  SIM.fb=(ok?'✓ Correct. ':'✗ Not quite. ')+'You chose “'+p.opts[k]+'”; the answer is “'+p.opts[p.correct]+'”. '+p.why;SIM.fbc=ok?'good':'badc';
+  if(SIM.idx>=SIM.steps.length-1)stopPlay();render()};
+SIM.back=function(){stopPlay();if(SIM.pending!==null){SIM.pending=null;render();return}if(SIM.idx>=0){SIM.idx--;SIM.fb='';render()}};
+SIM.reset=function(){stopPlay();SIM.pending=null;SIM.answers={};SIM.idx=-1;SIM.fb='';SIM.fbc='';render()};
+SIM.togglePlay=function(){
+  if(SIM.playing){stopPlay();return}
+  if(SIM.pending!==null)return;
+  if(SIM.idx>=SIM.steps.length-1)SIM.reset();
+  SIM.playing=true;$('#btnPlay').textContent='⏸ Pause';SIM.next();if(SIM.playing)schedule()};
+function render(){
+  const n=SIM.steps.length,i=SIM.idx,a=Object.keys(SIM.answers).length,r=Object.values(SIM.answers).filter(x=>x.ok).length;
+  $('#score').textContent='Score '+r+'/'+a;$('#stepno').textContent='Step '+(i+1)+'/'+n;
+  $('#say').textContent=i<0?SIM.initSay:SIM.steps[i].say;
+  const q=$('#quiz');
+  if(SIM.pending!==null){const p=SIM.steps[SIM.pending].predict;q.hidden=false;q.querySelector('p').textContent=p.q;
+    q.querySelector('.opts').innerHTML=p.opts.map((o,k)=>'<button type="button" data-k="'+k+'" aria-label="Answer: '+esc(o)+'">'+esc(o)+'</button>').join('');
+    q.querySelectorAll('.opts button').forEach(b=>b.onclick=()=>SIM.answer(+b.dataset.k))}else{q.hidden=true;q.querySelector('.opts').innerHTML=''}
+  const fb=$('#fb');fb.textContent=SIM.fb;fb.className=SIM.fbc;
+  const sm=$('#summary');
+  if(i>=n-1&&n>0&&SIM.pending===null){sm.hidden=false;
+    let h='<h2>Summary</h2>'+(SIM.summaryHtml?SIM.summaryHtml():'');
+    if(a===0)h+='<p>No predictions were answered (turn on “Predict first” and run again to be scored).</p>';
+    else{h+='<p><b>Prediction score: '+r+' / '+a+'</b></p><ul>';
+      SIM.steps.forEach((s,k)=>{const x=SIM.answers[k];if(x)h+='<li>'+(x.ok?'✓ ':'✗ ')+esc(s.predict.q)+' — you: <i>'+esc(s.predict.opts[x.pick])+'</i>; answer: <i>'+esc(s.predict.opts[s.predict.correct])+'</i>. '+esc(s.predict.why)+'</li>'});h+='</ul>'}
+    sm.innerHTML=h}else{sm.hidden=true;sm.innerHTML=''}
+  $('#btnBack').disabled=!(i>=0||SIM.pending!==null);
+  if(SIM.draw)SIM.draw()}
+$('#btnStep').onclick=()=>SIM.next();$('#btnBack').onclick=()=>SIM.back();$('#btnReset').onclick=()=>SIM.reset();$('#btnPlay').onclick=()=>SIM.togglePlay();
+$('#speed').onchange=()=>{if(SIM.playing)schedule()};
+$('#predictToggle').onchange=()=>{if(!$('#predictToggle').checked&&SIM.pending!==null){SIM.pending=null;SIM.next()}};
+$('#btnTheme').onclick=()=>{const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('dop:theme',t)}catch(e){}render()};
+document.addEventListener('keydown',e=>{
+  const t=e.target,tag=t.tagName;if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA'||e.ctrlKey||e.metaKey||e.altKey)return;
+  if(e.key===' '||e.code==='Space'){e.preventDefault();SIM.togglePlay()}
+  else if(e.key==='ArrowRight'){e.preventDefault();SIM.next()}
+  else if(e.key==='ArrowLeft'){e.preventDefault();SIM.back()}
+  else if(e.key==='r'||e.key==='R'){SIM.reset()}});
+document.addEventListener('keyup',e=>{const t=e.target;if((e.key===' '||e.code==='Space')&&t.tagName==='BUTTON')e.preventDefault()});
+
+
+const ACC_A='111111111111',ACC_B='222222222222';
+const ARN_USER='arn:aws:iam::111111111111:user/alice',ARN_ROLE='arn:aws:iam::111111111111:role/Deployer',ARN_SESS='arn:aws:sts::111111111111:assumed-role/Deployer/ci-session';
+const LAYERS=[{k:'identity',n:'Identity-based policy'},{k:'boundary',n:'Permissions boundary'},{k:'scp',n:'Service control policy (SCP)'},{k:'resource',n:'Resource-based policy'},{k:'session',n:'Session policy'},{k:'deny',n:'Explicit Deny policy'}];
+const LN=Object.fromEntries(LAYERS.map(l=>[l.k,l.n]));
+const L=v=>v===undefined?[]:(Array.isArray(v)?v:[v]);
+const wc=(p,s,ci)=>new RegExp('^'+String(p).replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.')+'$',ci?'i':'').test(s);
+function ip2n(s){const m=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(s).trim());if(!m)return null;const p=m.slice(1).map(Number);if(p.some(x=>x>255))return null;return((p[0]*256+p[1])*256+p[2])*256+p[3]}
+function inCidr(ip,c){const a=String(c).split('/'),x=ip2n(ip),y=ip2n(a[0]);if(x===null||y===null)return false;const len=a[1]===undefined?32:+a[1];if(!(len>=0&&len<=32))return false;const sz=Math.pow(2,32-len);return Math.floor(x/sz)===Math.floor(y/sz)}
+const NEG=['StringNotEquals','StringNotLike','NotIpAddress'],OPS=['StringEquals','StringLike','IpAddress'].concat(NEG);
+const KEYOK=/^aws:(sourceip|principalaccount|principaltag\/.+)$/i;
+function ctxVal(key,ctx){const k=key.toLowerCase();if(k==='aws:sourceip')return ctx.ip||null;if(k==='aws:principalaccount')return ACC_A;
+  const t=key.slice(17).toLowerCase();for(const a in ctx.tags)if(a.toLowerCase()===t)return ctx.tags[a];return null}
+function condEval(cond,ctx){
+  for(const op in cond)for(const key in cond[op]){
+    const vals=L(cond[op][key]).map(String),v=ctxVal(key,ctx),neg=NEG.includes(op);let ok;
+    if(v===null)ok=neg;else{const m=vals.some(x=>(op==='IpAddress'||op==='NotIpAddress')?inCidr(v,x):op.includes('Like')?wc(x,v,false):x===v);ok=neg?!m:m}
+    if(!ok)return{ok:false,why:'condition '+op+' on '+key+' is false (request value: '+(v===null?'absent':v)+'; policy: '+vals.join(' | ')+')'}}
+  return{ok:true}}
+function parsePolicy(txt,kind){
+  const out={st:[],warn:[]};let o;
+  try{o=JSON.parse(txt)}catch(e){out.warn.push('Invalid JSON ('+e.message+'); layer treated as empty.');return out}
+  let arr=Array.isArray(o)?o:(o&&o.Statement!==undefined?o.Statement:o);if(!Array.isArray(arr))arr=[arr];
+  arr.forEach((s,i)=>{const n=i+1,w=m=>out.warn.push('Statement #'+n+' ignored: '+m);
+    if(!s||typeof s!=='object')return w('not an object');
+    if(s.NotAction||s.NotResource||s.NotPrincipal)return w('NotAction/NotResource/NotPrincipal are not supported');
+    if(s.Effect!=='Allow'&&s.Effect!=='Deny')return w('Effect must be Allow or Deny');
+    if(kind==='deny'&&s.Effect!=='Deny')return w('only Deny statements are used in this layer');
+    const act=L(s.Action).map(String);if(!act.length)return w('Action is required');
+    let res=L(s.Resource).map(String);if(!res.length){if(kind==='resource')res=['*'];else return w('Resource is required')}
+    const cond=s.Condition||{};
+    for(const op in cond){if(!OPS.includes(op))return w('condition operator '+op+' is not supported');
+      for(const k in cond[op])if(!KEYOK.test(k))return w('condition key '+k+' is not supported')}
+    let pr=null;
+    if(kind==='resource'){const P=s.Principal;if(P===undefined)return w('Principal is required in a resource-based policy');
+      pr=L(typeof P==='string'?P:(P&&P.AWS!==undefined?P.AWS:undefined)).map(String);if(!pr.length)return w('only Principal "*" or {"AWS": ...} is supported');
+      if(s.Effect==='Allow'&&pr.includes('*'))return w('a public Allow ("*") is not modelled')}
+    out.st.push({i:n,sid:s.Sid,effect:s.Effect,act,res,cond,pr})});
+  return out}
+function prMatch(p,ctx,eff){
+  if(p==='*')return eff==='Deny'?'indirect':null;
+  if(p===ctx.principalArn)return'direct';
+  if(ctx.ptype==='role'&&p===ARN_ROLE)return'indirect';
+  if(p===ACC_A||p==='arn:aws:iam::'+ACC_A+':root')return'indirect';return null}
+function matchStmt(s,ctx){
+  if(!s.act.some(a=>wc(a,ctx.action,true)))return{m:false,why:'action '+ctx.action+' is not covered by '+s.act.join(', ')};
+  if(!s.res.some(r=>wc(r,ctx.resource,false)))return{m:false,why:'resource is not covered by '+s.res.join(', ')};
+  let direct=false;
+  if(s.pr){let best=null;s.pr.forEach(p=>{const r=prMatch(p,ctx,s.effect);if(r==='direct')best='direct';else if(r&&!best)best=r});
+    if(!best)return{m:false,why:'Principal '+s.pr.join(', ')+' does not name the requester'};direct=best==='direct'}
+  const c=condEval(s.cond,ctx);if(!c.ok)return{m:false,why:c.why};
+  return{m:true,direct}}
+function scan(layer,ctx,effect){
+  const r={hit:null,direct:false,whys:[]};
+  layer.parsed.st.forEach(s=>{if(s.effect!==effect)return;const x=matchStmt(s,ctx);
+    if(x.m){if(!r.hit||(x.direct&&!r.direct)){r.hit=s;r.direct=!!x.direct}}else r.whys.push('statement #'+s.i+': '+x.why)});
+  return r}
+const sdesc=s=>'statement #'+s.i+(s.sid?' ('+s.sid+')':'');
+function evaluate(ctx,lay){
+  const cross=ctx.scope==='cross',steps=[];let dec=null;
+  const add=(id,layer,label,status,badge,say,detail,final)=>{const st={id,layer,label,status,badge,say,detail:detail||'',final:final||null};steps.push(st);return st};
+  const done=(allow,kind,layer)=>{dec={allow,kind,layer}};
+  add('start',null,'Start','info','DEFAULT: DENY','Every request begins as an implicit deny; policies must earn an Allow.','Request: '+ctx.principalArn+' → '+ctx.action+' on '+ctx.resource+' ('+(cross?'cross-account: principal in '+ACC_A+', resource in '+ACC_B:'same account '+ACC_A)+').');
+  // 1 explicit deny scan
+  let dh=null;const scanned=[];
+  for(const l of LAYERS){if(!lay[l.k].on)continue;scanned.push(l.n);const r=scan(lay[l.k],ctx,'Deny');if(r.hit){dh={l,s:r.hit};break}}
+  if(dh){add('deny','deny','Explicit Deny scan','expl','EXPLICIT DENY','An explicit Deny in the '+dh.l.n+' matches, and an explicit deny always wins.','Matched Deny '+sdesc(dh.s)+' in '+dh.l.n+'. No Allow anywhere can override it.','expl');done(false,'explicit',dh.l.k)}
+  else add('deny','deny','Explicit Deny scan','ok','NO DENY','No applicable Deny was found in any attached policy, so evaluation continues.','Scanned: '+(scanned.length?scanned.join(', '):'no policies attached')+'.');
+  // 2 SCP
+  if(!dec){
+    if(!lay.scp.on)add('scp','scp','SCP','na','NO SCP','No SCP is attached, so nothing limits the principal here.','Accounts in an organization normally have FullAWSAccess; this simulator models “no SCP” as no limit.');
+    else{const r=scan(lay.scp,ctx,'Allow');
+      if(r.hit)add('scp','scp','SCP','ok','LIMIT PASSES','The SCP allows this action, which only means it is not blocked; an SCP grants nothing by itself.','Matched Allow '+sdesc(r.hit)+'.');
+      else{add('scp','scp','SCP','impl','IMPLICIT DENY','The SCP has no Allow for this request, so the request is denied no matter what other policies say.','SCPs are a limit: '+(r.whys.join('; ')||'no Allow statements')+'.','impl');done(false,'implicit','scp')}}}
+  // 3 same-account resource policy
+  let rb=null;
+  if(lay.resource.on)rb=scan(lay.resource,ctx,'Allow');
+  if(!dec&&!cross){
+    if(rb&&rb.hit&&rb.direct){add('resource','resource','Resource-based policy','ok','ALLOW (DIRECT)','The resource policy names the requester directly, so it grants on its own, even without identity policy or inside a boundary.','Matched Allow '+sdesc(rb.hit)+' naming '+ctx.principalArn+'. Documented: a same-account grant to the user or role-session ARN is not limited by implicit denies in identity policy, boundary or session policy.','allow');done(true,'allow','resource')}
+    else if(rb&&rb.hit)add('resource','resource','Resource-based policy','info','ALLOW (LIMITED)','The resource policy allows via a role ARN or account principal; this still has to pass the boundary and session policy.','Matched Allow '+sdesc(rb.hit)+'; it does not name the requester directly.');
+    else add('resource','resource','Resource-based policy','na',lay.resource.on?'NO MATCH':'NONE','No resource-based Allow applies here; the identity-based policy must grant.',lay.resource.on?(rb.whys.join('; ')||'no Allow statements'):'No resource-based policy attached.')}
+  // identity
+  if(!dec){
+    const r=lay.identity.on?scan(lay.identity,ctx,'Allow'):{hit:null,whys:[]};
+    const viaRb=!cross&&rb&&rb.hit;
+    if(r.hit)add('identity','identity','Identity-based policy','ok','ALLOW FOUND',(cross?'The principal’s own policy allows the request (cross-account needs this).':'The identity policy allows the request; limits are checked next.'),'Matched Allow '+sdesc(r.hit)+'.');
+    else if(viaRb)add('identity','identity','Identity-based policy','info','NO ALLOW (OK)','No identity Allow, but the resource policy supplied one in the same account, so evaluation continues.','Same account: Allow in either identity or resource policy is enough (union), subject to limits next.');
+    else{add('identity','identity','Identity-based policy','impl','IMPLICIT DENY',(cross?'The principal has no identity-based Allow for the other account’s resource, so the request is denied.':'Nothing grants this action, so the implicit deny stands.'),lay.identity.on?(r.whys.join('; ')||'no Allow statements'):'No identity-based policy attached.','impl');done(false,'implicit','identity')}}
+  // boundary
+  if(!dec){
+    if(!lay.boundary.on)add('boundary','boundary','Permissions boundary','na','NO BOUNDARY','No permissions boundary is set, so the grant is not capped.');
+    else{const r=scan(lay.boundary,ctx,'Allow');
+      if(r.hit)add('boundary','boundary','Permissions boundary','ok','WITHIN BOUNDARY','The boundary allows this action, so the grant fits inside the maximum permissions.','Matched Allow '+sdesc(r.hit)+'.');
+      else{add('boundary','boundary','Permissions boundary','impl','IMPLICIT DENY','The boundary does not allow this action; a boundary caps grants and never grants itself.',r.whys.join('; ')||'no Allow statements','impl');done(false,'implicit','boundary')}}}
+  // session
+  if(!dec){
+    const sess=ctx.ptype==='role';
+    if(!sess)add('session','session','Session policy','na',lay.session.on?'NOT A SESSION':'N/A','The requester is an IAM user, not a session principal, so no session policy applies.',lay.session.on?'The attached session policy is ignored for an IAM user.':'',!cross?'allow':null);
+    else if(!lay.session.on)add('session','session','Session policy','na','NONE PASSED','No session policy was passed when the role was assumed (default session policy allows).','',!cross?'allow':null);
+    else{const r=scan(lay.session,ctx,'Allow');
+      if(r.hit)add('session','session','Session policy','ok','WITHIN SESSION','The session policy allows this action.','Matched Allow '+sdesc(r.hit)+'.',!cross?'allow':null);
+      else{add('session','session','Session policy','impl','IMPLICIT DENY','The session policy does not allow this action; session policies only restrict.',r.whys.join('; ')||'no Allow statements','impl');done(false,'implicit','session')}}
+    if(!dec&&!cross){const viaId=lay.identity.on&&scan(lay.identity,ctx,'Allow').hit;done(true,'allow',viaId?'identity':'resource');}}
+  // cross-account resource side
+  if(!dec&&cross){
+    if(rb&&rb.hit){add('resource','resource','Resource-based policy (trusting account)','ok','ALLOW (BOTH SIDES)','The resource account’s policy allows the principal as well, and both evaluations returned Allow.','Matched Allow '+sdesc(rb.hit)+'. Trusted-account evaluation already passed above.','allow');done(true,'allow','resource')}
+    else{add('resource','resource','Resource-based policy (trusting account)','impl','IMPLICIT DENY','The resource’s account has no policy allowing this principal, and cross-account needs Allow on both sides.',lay.resource.on?(rb.whys.join('; ')||'no Allow statements'):'No resource-based policy attached.','impl');done(false,'implicit','resource')}}
+  const ds=dec.allow?'ALLOW':(dec.kind==='explicit'?'DENY (explicit)':'DENY (implicit)');
+  const where=dec.layer==='identity'&&dec.allow&&cross?'identity and resource policies':LN[dec.layer];
+  add('final',null,'Final decision',dec.allow?'ok':(dec.kind==='explicit'?'expl':'impl'),ds,dec.allow?'Final decision: ALLOW, granted by '+where+' with no explicit Deny and all limits satisfied.':'Final decision: '+ds+' at the '+LN[dec.layer]+' layer.',(dec.allow?'Allowed':'Blocked')+' by: '+where+'.');
+  // predictions
+  const opts4=['Check passes; evaluation continues','Implicit deny (no matching Allow), final DENY','Explicit Deny found, final DENY','Final ALLOW is decided here'];
+  const idxOf=s=>s.final==='allow'?3:s.final==='impl'?1:s.final==='expl'?2:0;
+  steps[0].predict={q:'Before any policy is read, what is the decision for a request?',opts:['Allow','Implicit deny','Allow unless a Deny statement exists'],correct:1,why:'AWS starts every request at implicit deny; an explicit Allow must be found, and no explicit Deny may exist.'};
+  const mid=steps.slice(1,-1),dec_i=mid.findIndex(s=>s.final);
+  const pick=new Set();if(dec_i>=0)pick.add(dec_i);
+  mid.forEach((s,i)=>{if(pick.size<3&&s.status!=='na'&&i!==dec_i)pick.add(i)});
+  mid.forEach((s,i)=>{if(pick.has(i))s.predict={q:'At “'+s.label+'”, given the policies and request you configured, what happens?',opts:opts4,correct:idxOf(s),why:s.say+' '+s.detail}});
+  const last=steps[steps.length-1];
+  last.predict={q:'What is the final decision for this request?',opts:['ALLOW','DENY (implicit: no applicable Allow)','DENY (explicit Deny)'],correct:dec.allow?0:(dec.kind==='explicit'?2:1),why:last.say};
+  return{steps,decision:ds,allow:dec.allow,kind:dec.kind,layer:dec.layer}}
+
+/* ---------- scenarios ---------- */
+const bucket='arn:aws:s3:::demo-bucket/report.csv';
+const allowS3=(extra)=>({Version:'2012-10-17',Statement:[Object.assign({Sid:'AllowS3',Effect:'Allow',Action:'s3:*',Resource:['arn:aws:s3:::demo-bucket','arn:aws:s3:::demo-bucket/*']},extra||{})]});
+const DEF={
+ identity:{on:true,p:allowS3()},
+ boundary:{on:false,p:{Version:'2012-10-17',Statement:[{Sid:'MaxPerms',Effect:'Allow',Action:['s3:*','cloudwatch:*','ec2:*'],Resource:'*'}]}},
+ scp:{on:false,p:{Version:'2012-10-17',Statement:[{Sid:'OrgGuardrail',Effect:'Allow',Action:['ec2:*','cloudwatch:*'],Resource:'*'}]}},
+ resource:{on:false,p:{Version:'2012-10-17',Statement:[{Sid:'BucketPolicy',Effect:'Allow',Principal:{AWS:ARN_USER},Action:'s3:GetObject',Resource:'arn:aws:s3:::demo-bucket/*'}]}},
+ session:{on:false,p:{Version:'2012-10-17',Statement:[{Sid:'SessionScope',Effect:'Allow',Action:'ec2:Describe*',Resource:'*'}]}},
+ deny:{on:false,p:{Version:'2012-10-17',Statement:[{Sid:'NoDelete',Effect:'Deny',Action:'s3:DeleteObject',Resource:'arn:aws:s3:::demo-bucket/*'}]}}};
+const SC=[
+ {id:'scp',name:'1. Allowed by identity policy, blocked by SCP',desc:'Alice’s identity policy allows s3:*, but the organization SCP only allows ec2 and cloudwatch. SCPs limit; the identity Allow cannot get past it.',expect:{decision:'DENY (implicit)',layer:'scp'},
+  req:{ptype:'user',scope:'same',action:'s3:GetObject',resource:bucket,ip:'10.1.2.3',tags:'Team=platform'},lay:{identity:{on:true},scp:{on:true}}},
+ {id:'boundary',name:'2. Permissions boundary blocks the grant',desc:'An identity policy allows iam:CreateUser, but the boundary only permits s3, cloudwatch and ec2 (the documented “Shirley” case).',expect:{decision:'DENY (implicit)',layer:'boundary'},
+  req:{ptype:'user',scope:'same',action:'iam:CreateUser',resource:'arn:aws:iam::111111111111:user/new-hire',ip:'10.1.2.3',tags:'Team=platform'},
+  lay:{identity:{on:true,p:{Version:'2012-10-17',Statement:[{Sid:'AllowCreateUser',Effect:'Allow',Action:'iam:CreateUser',Resource:'*'}]}},boundary:{on:true}}},
+ {id:'cross',name:'3. Cross-account needs both sides',desc:'The role’s identity policy allows reading the partner bucket in account 222222222222, but the bucket has no policy allowing the role. Tick the resource-based layer to fix it.',expect:{decision:'DENY (implicit)',layer:'resource'},
+  req:{ptype:'role',scope:'cross',action:'s3:GetObject',resource:'arn:aws:s3:::partner-bucket/data.csv',ip:'10.1.2.3',tags:'Team=platform'},
+  lay:{identity:{on:true,p:{Version:'2012-10-17',Statement:[{Sid:'ReadPartner',Effect:'Allow',Action:'s3:GetObject',Resource:'arn:aws:s3:::partner-bucket/*'}]}},
+   resource:{on:false,p:{Version:'2012-10-17',Statement:[{Sid:'AllowAccountA',Effect:'Allow',Principal:{AWS:ARN_ROLE},Action:'s3:GetObject',Resource:'arn:aws:s3:::partner-bucket/*'}]}}}},
+ {id:'deny',name:'4. Explicit deny beats allow',desc:'Identity policy allows s3:*, and the bucket policy even names Alice directly, but an explicit Deny on s3:DeleteObject wins over every Allow.',expect:{decision:'DENY (explicit)',layer:'deny'},
+  req:{ptype:'user',scope:'same',action:'s3:DeleteObject',resource:bucket,ip:'10.1.2.3',tags:'Team=platform'},
+  lay:{identity:{on:true},resource:{on:true,p:{Version:'2012-10-17',Statement:[{Sid:'AliceAll',Effect:'Allow',Principal:{AWS:ARN_USER},Action:'s3:*',Resource:'arn:aws:s3:::demo-bucket/*'}]}},deny:{on:true}}},
+ {id:'direct',name:'5. Same-account resource policy grants directly',desc:'Alice has no identity policy and a boundary that only allows ec2, yet the bucket policy names her user ARN, which grants on its own in the same account.',expect:{decision:'ALLOW',layer:'resource'},
+  req:{ptype:'user',scope:'same',action:'s3:GetObject',resource:bucket,ip:'10.1.2.3',tags:'Team=platform'},
+  lay:{identity:{on:false},boundary:{on:true,p:{Version:'2012-10-17',Statement:[{Sid:'Ec2Only',Effect:'Allow',Action:'ec2:*',Resource:'*'}]}},resource:{on:true}}},
+ {id:'cond',name:'6. Condition on source IP and principal tag',desc:'The identity Allow needs aws:PrincipalTag/Team = platform AND aws:SourceIp in 10.0.0.0/8. The tag matches but the request comes from 203.0.113.9, so the Allow does not apply. Change the IP to 10.1.1.1.',expect:{decision:'DENY (implicit)',layer:'identity'},
+  req:{ptype:'user',scope:'same',action:'s3:GetObject',resource:bucket,ip:'203.0.113.9',tags:'Team=platform'},
+  lay:{identity:{on:true,p:allowS3({Condition:{StringEquals:{'aws:PrincipalTag/Team':'platform'},IpAddress:{'aws:SourceIp':'10.0.0.0/8'}}})}}}];
+SIM.SC=SC;
+const MAXC={};
+/* ---------- UI ---------- */
+(function build(){
+  $('#scn').innerHTML=SC.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join('')+'<option value="custom">Custom (your edits)</option>';
+  $('#layers').innerHTML=LAYERS.map(l=>'<div class="mini" id="card-'+l.k+'"><div class="hd"><label><input type="checkbox" id="en-'+l.k+'" aria-label="Attach '+esc(l.n)+'"> '+esc(l.n)+'</label><span class="chip" id="st-'+l.k+'">not reached</span></div><textarea class="pol" id="tx-'+l.k+'" spellcheck="false" aria-label="'+esc(l.n)+' JSON"></textarea><div class="warnl" id="wn-'+l.k+'"></div></div>').join('')})();
+let applying=false;
+function readCtx(){
+  const ptype=$('#ptype').value,tags={};
+  $('#tags').value.split(',').forEach(t=>{const i=t.indexOf('=');if(i>0)tags[t.slice(0,i).trim()]=t.slice(i+1).trim()});
+  return{ptype,scope:$('#scope').value,action:$('#action').value.trim(),resource:$('#resource').value.trim(),ip:$('#ip').value.trim(),tags,principalArn:ptype==='user'?ARN_USER:ARN_SESS}}
+function readLayers(){const o={};LAYERS.forEach(l=>{o[l.k]={on:$('#en-'+l.k).checked,kind:l.k,parsed:parsePolicy($('#tx-'+l.k).value,l.k)}});return o}
+function recompute(){
+  const ctx=readCtx(),lay=readLayers();
+  LAYERS.forEach(l=>{$('#wn-'+l.k).textContent=lay[l.k].parsed.warn.join(' ')});
+  $('#arns').textContent='Principal ARN used in the request: '+ctx.principalArn+(ctx.ptype==='role'?' (role ARN: '+ARN_ROLE+')':'')+'. Resource account: '+(ctx.scope==='cross'?ACC_B:ACC_A)+'.';
+  SIM.ctx=ctx;SIM.result=evaluate(ctx,lay);SIM.setSteps(SIM.result.steps)}
+function userEdit(){if(!applying){$('#scn').value='custom';$('#scnDesc').textContent='Custom: you changed the inputs. Pick a scenario to restore a preset.'}recompute()}
+function applyScenario(id){
+  const sc=SC.find(s=>s.id===id);if(!sc)return;applying=true;
+  $('#ptype').value=sc.req.ptype;$('#scope').value=sc.req.scope;$('#action').value=sc.req.action;$('#resource').value=sc.req.resource;$('#ip').value=sc.req.ip;$('#tags').value=sc.req.tags;
+  LAYERS.forEach(l=>{const o=Object.assign({},DEF[l.k],sc.lay[l.k]||{on:false});const on=sc.lay[l.k]?(sc.lay[l.k].on!==undefined?sc.lay[l.k].on:DEF[l.k].on):false;
+    $('#en-'+l.k).checked=on;$('#tx-'+l.k).value=JSON.stringify((sc.lay[l.k]&&sc.lay[l.k].p)||DEF[l.k].p,null,2)});
+  $('#scnDesc').textContent=sc.desc;recompute();applying=false}
+$('#scn').onchange=()=>{if($('#scn').value!=='custom')applyScenario($('#scn').value)};
+['ptype','scope','action','resource','ip','tags'].forEach(i=>$('#'+i).addEventListener('input',userEdit));
+LAYERS.forEach(l=>{$('#en-'+l.k).addEventListener('change',userEdit);$('#tx-'+l.k).addEventListener('input',userEdit)});
+/* ---------- drawing ---------- */
+SIM.initSay='Choose a scenario or edit the request, then press Step or Play.';
+const SLBL={ok:'ok',impl:'impl',expl:'expl',info:'info',na:'na'};
+SIM.draw=function(){
+  const st=SIM.steps,i=SIM.idx,res=SIM.result;if(!res)return;
+  $('#flow').innerHTML=st.map((s,k)=>'<div class="nd'+(k<=i?' rev s-'+s.status:'')+(k===i?' cur':'')+'" data-k="'+k+'"><b>'+esc(s.label)+'</b><span class="bd">'+(k<=i?esc(s.badge):'…')+'</span></div>').join('');
+  $('#trace').innerHTML=st.slice(0,i+1).map(s=>'<li><b class="t-'+s.status+'">'+esc(s.label)+' — '+esc(s.badge)+'.</b> '+esc(s.say)+(s.detail?' <span class="note">'+esc(s.detail)+'</span>':'')+'</li>').join('');
+  const c=SIM.ctx;
+  $('#stReq').innerHTML=['Principal: '+c.principalArn,'Action: '+c.action,'Resource: '+c.resource,'Scope: '+(c.scope==='cross'?'cross-account (A→B)':'same account'),'aws:SourceIp: '+(c.ip||'(absent)'),'Tags: '+(Object.keys(c.tags).map(k=>k+'='+c.tags[k]).join(', ')||'(none)')].map(x=>'<li>'+esc(x)+'</li>').join('');
+  const byLayer={};st.slice(0,i+1).forEach(s=>{if(s.layer)byLayer[s.layer]=s});
+  $('#stLay').innerHTML=LAYERS.map(l=>'<li>'+esc(l.n)+': <b class="t-'+(byLayer[l.k]?byLayer[l.k].status:'na')+'">'+(byLayer[l.k]?esc(byLayer[l.k].badge):'not reached')+'</b></li>').join('');
+  LAYERS.forEach(l=>{const b=byLayer[l.k];const e=$('#st-'+l.k);e.textContent=b?b.badge:'not reached';$('#card-'+l.k).classList.toggle('decider',i>=st.length-1&&res.layer===l.k)});
+  const fin=i>=st.length-1;const v=$('#verdict');v.textContent=fin?res.decision+' at '+LN[res.layer]:'pending';
+  v.style.color=fin?(res.allow?'var(--ok)':(res.kind==='explicit'?'var(--bad)':'var(--warn)')):''};
+SIM.summaryHtml=function(){const r=SIM.result;return'<p><b>Outcome: '+esc(r.decision)+'</b> — decided at: <b>'+esc(LN[r.layer])+'</b>. '+esc(r.steps[r.steps.length-1].say)+'</p><p class="note">Try changing one layer above (tick a box or edit the JSON) and step again to see the outcome move.</p>'};
+applyScenario('scp');
+
+</script></body></html>

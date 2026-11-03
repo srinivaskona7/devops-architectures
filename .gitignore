@@ -1,0 +1,7 @@
+.DS_Store
+__pycache__/
+tools/_*.pdf
+tools/report.json
+/.venv/
+/_site/
+tools/audit.json

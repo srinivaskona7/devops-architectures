@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kubernetes rolling update simulator</title>
+<meta name="sim:title" content="Kubernetes rolling update simulator">
+<meta name="sim:topic" content="04-kubernetes">
+<meta name="sim:summary" content="Watch a Deployment roll out a new ReplicaSet with maxSurge and maxUnavailable, readiness delay, a stalled bad version and kubectl rollout undo.">
+<meta name="sim:concepts" content="deployment,rolling update,replicaset,maxSurge,maxUnavailable,readiness probe,progressDeadlineSeconds,rollout undo,rollback">
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--hi:#e8f1fc;--okbg:#dcf3e5;--badbg:#fbe1de;--warnbg:#fdf0d6;--focus:#7a3cff;--old:#9aa6b4;--new:#0b63c5}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--hi:#1b2a3c;--okbg:#14301f;--badbg:#3a1a18;--warnbg:#3a2c10;--focus:#b79bff;--old:#6b7787;--new:#5aa2f5}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1240px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}h3{font-size:.92rem;margin:12px 0 6px}
+.lede{margin:4px 0 12px;color:var(--muted)}.muted{color:var(--muted)}
+button,select,input{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover:not(:disabled){background:var(--hi)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number]{min-height:36px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);max-width:100%}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--accent)}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.bar-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.bar-ctl label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;border:1px solid var(--border);background:var(--card);font-size:.85rem}
+.say{padding:10px 14px;border-left:4px solid var(--accent);background:var(--hi);border-radius:6px;margin:8px 0;min-height:48px;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0;min-width:0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px}
+@media(min-width:960px){.grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.opts{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.opts button{text-align:left;white-space:normal}
+.opts button.right{background:var(--okbg);border-color:var(--ok)}.opts button.wrong{background:var(--badbg);border-color:var(--bad)}
+#quiz{border-color:var(--warn);background:var(--warnbg)}
+.scroll{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-align:top}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.kv div{border:1px solid var(--border);border-radius:6px;padding:4px 8px}.kv b{display:block;font-size:1.15rem}
+.bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.field{display:flex;flex-direction:column;gap:2px;margin:6px 0;min-width:0}.field>span{font-size:.85rem;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+svg{max-width:100%;height:auto;display:block}
+.simp li{margin:3px 0}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+.pods{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+.pd{min-width:44px;padding:3px 6px;border-radius:6px;font-size:.78rem;text-align:center;border:2px solid var(--old);color:var(--fg)}
+.pd.v1{background:var(--card)}.pd.v2{border-color:var(--new)}
+.pd.nr{border-style:dashed;opacity:.75}.pd.rd.v1{background:var(--hi)}.pd.rd.v2{background:var(--okbg);border-color:var(--ok)}
+.pd.bd{border-color:var(--bad)}
+.rn{font-weight:600}.warn{color:var(--bad);font-weight:600}
+.note{margin:6px 0;padding:6px 10px;border-radius:6px;background:var(--hi)}
+
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">&larr; Back to curriculum</a><h1>Kubernetes rolling update simulator</h1><button id="theme" aria-label="Toggle light or dark theme">Theme</button></header>
+<main>
+<p class="lede">Old and new ReplicaSets scale step by step. Surge rounds up, unavailable rounds down, and available pods never drop below replicas minus maxUnavailable.</p>
+<div class="bar-ctl" role="group" aria-label="Playback controls">
+<button id="btnBack" aria-label="Back one step (Left arrow)">&#9664; Back</button>
+<button id="btnPlay" class="primary" aria-label="Play (Space)">&#9654; Play</button>
+<button id="btnStep" aria-label="Step forward (Right arrow)">Step &#9654;&#9654;</button>
+<button id="btnReset" aria-label="Reset (R)">&#8634; Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predict" checked aria-label="Predict first"> Predict first</label>
+<button id="btnUndo" aria-label="Run kubectl rollout undo (roll back)" disabled>kubectl rollout undo</button>
+<span class="chip" id="score" aria-live="polite">Score 0/0</span><span class="chip" id="stepinfo">Step 0 / 0</span>
+</div>
+<div id="say" class="say" role="status" aria-live="polite"></div>
+<section id="quiz" class="card" hidden aria-label="Prediction question"><h2>Predict first: what happens next?</h2><p></p><div class="opts"></div><div id="quizFb" role="status"></div></section>
+<div class="grid">
+<div>
+<section class="card" aria-label="Live state"><h2>Live state</h2><div id="state"></div></section>
+<section id="summary" class="card" hidden aria-label="Summary"></section>
+</div>
+<aside>
+<section class="card" id="tryit" aria-label="Try it"><h2>Try it (example values, edit and watch the outcome change)</h2><div class="field"><span>Replicas: <b id="vR">10</b></span><input type="range" id="R" min="3" max="20" value="10" aria-label="Replicas"></div>
+<div class="row"><div class="field"><span>maxSurge</span><input type="number" id="S" min="0" max="100" value="25" aria-label="maxSurge value"></div>
+<div class="field"><span>unit</span><select id="Su" aria-label="maxSurge unit"><option value="pct" selected>percent</option><option value="abs">absolute</option></select></div></div>
+<div class="row"><div class="field"><span>maxUnavailable</span><input type="number" id="U" min="0" max="100" value="25" aria-label="maxUnavailable value"></div>
+<div class="field"><span>unit</span><select id="Uu" aria-label="maxUnavailable unit"><option value="pct" selected>percent</option><option value="abs">absolute</option></select></div></div>
+<div class="field"><span>Readiness delay (seconds until a new pod is Ready): <b id="vD">5</b></span><input type="range" id="D" min="1" max="20" value="5" aria-label="Readiness delay seconds"></div>
+<div class="field"><span>progressDeadlineSeconds: <b id="vP">60</b></span><input type="range" id="P" min="30" max="180" step="10" value="60" aria-label="progressDeadlineSeconds"></div>
+<label class="row" style="min-height:36px"><input type="checkbox" id="bad" aria-label="Bad version: new pods fail readiness"> Bad version (new pods never become Ready)</label>
+<div id="resolved" class="note" aria-live="polite"></div></section>
+<section class="card simp" aria-label="Simplifications"><h2>Simplifications</h2><ul><li>Pods are created and removed instantly (no scheduling, image pull or termination grace period). Readiness is a fixed delay; minReadySeconds is 0, so Available equals Ready.</li>
+<li>The controller loop follows the documented rules (scale up the new ReplicaSet to at most replicas + maxSurge, then scale down old pods while keeping at least replicas - maxUnavailable available, unhealthy old pods first) but one sync is shown per simulated second.</li>
+<li>Progress deadline: the clock restarts whenever the new ReplicaSet is scaled up or one of its pods becomes Ready; the simulator shows the ProgressDeadlineExceeded condition and stops. The real Deployment controller does not roll back by itself.</li>
+<li>If percentages resolve to maxSurge 0 and maxUnavailable 0, the controller uses maxUnavailable 1 (both cannot be 0). Rollback is modelled as <code>kubectl rollout undo</code> returning to the previous template; any pods of that earlier ReplicaSet still running count as already updated.</li>
+<li>Replica counts, seconds and percentages are example values.</li></ul>
+<p class="muted">All numbers shown are examples, not measurements. Keys: Space play/pause, Left back, Right step, R reset.</p></section>
+</aside></div>
+</main>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,timer:null,init:null,initSay:''};
+const App={};
+(function(){let t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+$('#theme').onclick=()=>{const n=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('dop:theme',n)}catch(e){};if(App.theme)App.theme()};
+function tally(){let a=0,r=0;for(const k in SIM.answers){a++;const s=SIM.steps[k];if(s&&s.predict&&SIM.answers[k]===s.predict.correct)r++}return{a,r}}
+function hideQuiz(){$('#quiz').hidden=true;SIM.pending=null}
+function render(){
+ const s=SIM.idx>=0?SIM.steps[SIM.idx]:null;
+ $('#say').textContent=s?s.say:SIM.initSay;
+ App.render(s?s.view:SIM.init,s);
+ $('#stepinfo').textContent='Step '+(SIM.idx+1)+' / '+SIM.steps.length;
+ $('#btnBack').disabled=SIM.idx<0;
+ const t=tally();$('#score').textContent='Score '+t.r+'/'+t.a;
+ const sm=$('#summary');
+ if(SIM.idx>=0&&SIM.idx===SIM.steps.length-1){
+  let h='<h2>Summary</h2><p><b>Prediction score: '+t.r+' / '+t.a+'</b>'+(t.a?'':' (turn on Predict first and reset to be quizzed)')+'</p>';
+  h+=(App.summary?App.summary(s):'');
+  const ks=Object.keys(SIM.answers).map(Number).sort((a,b)=>a-b);
+  if(ks.length){h+='<ol>';for(const k of ks){const p=SIM.steps[k].predict,ok=SIM.answers[k]===p.correct;
+   h+='<li><span class="'+(ok?'ok':'bad')+'">'+(ok?'Correct':'Missed')+'</span>: '+esc(p.q)+'<br><span class="muted">You chose: '+esc(p.opts[SIM.answers[k]])+'. Answer: '+esc(p.opts[p.correct])+'. '+esc(p.why)+'</span></li>'}h+='</ol>'}
+  sm.innerHTML=h;sm.hidden=false}else sm.hidden=true;
+ if(App.afterRender)App.afterRender(s);
+}
+function showQuiz(n){
+ const p=SIM.steps[n].predict;SIM.pending=n;
+ $('#quiz p').textContent=p.q;$('#quizFb').textContent='';
+ const o=$('#quiz .opts');o.innerHTML='';
+ p.opts.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.setAttribute('aria-label','Option '+(i+1)+': '+t);b.onclick=()=>answer(i);o.appendChild(b)});
+ $('#quiz').hidden=false;
+}
+function answer(i){
+ const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict;SIM.answers[n]=i;
+ [...$('#quiz .opts').children].forEach((b,j)=>{b.disabled=true;if(j===p.correct)b.classList.add('right');else if(j===i)b.classList.add('wrong')});
+ $('#quizFb').innerHTML='<b class="'+(i===p.correct?'ok':'bad')+'">'+(i===p.correct?'Correct. ':'Not quite. ')+'</b>'+esc(p.why);
+ SIM.pending=null;SIM.idx=n;render();
+}
+function pause(){if(SIM.timer){clearInterval(SIM.timer);SIM.timer=null}$('#btnPlay').innerHTML='&#9654; Play';$('#btnPlay').setAttribute('aria-label','Play (Space)')}
+function stepFwd(){
+ if(SIM.pending!==null)return false;
+ const n=SIM.idx+1;if(n>=SIM.steps.length){pause();return false}
+ const s=SIM.steps[n];
+ hideQuiz();
+ if($('#predict').checked&&s.predict&&SIM.answers[n]===undefined){showQuiz(n);pause();return false}
+ SIM.idx=n;render();return true;
+}
+function stepBack(){pause();hideQuiz();if(SIM.idx>=0){SIM.idx--;render()}}
+function reset(){pause();hideQuiz();SIM.answers={};SIM.idx=-1;App.rebuild();render()}
+function play(){
+ if(SIM.timer){pause();return}
+ if(SIM.idx>=SIM.steps.length-1)return;
+ $('#btnPlay').innerHTML='&#10074;&#10074; Pause';$('#btnPlay').setAttribute('aria-label','Pause (Space)');
+ const tick=()=>{if(!stepFwd())pause()};
+ SIM.timer=setInterval(tick,1300/parseFloat($('#speed').value));tick();
+}
+$('#speed').onchange=()=>{if(SIM.timer){clearInterval(SIM.timer);SIM.timer=setInterval(()=>{if(!stepFwd())pause()},1300/parseFloat($('#speed').value))}};
+$('#btnStep').onclick=()=>{pause();stepFwd()};$('#btnBack').onclick=stepBack;$('#btnPlay').onclick=play;$('#btnReset').onclick=reset;
+document.addEventListener('keydown',e=>{
+ const tg=e.target.tagName,ty=e.target.type;if(tg==='SELECT'||tg==='TEXTAREA'||(tg==='INPUT'&&ty!=='checkbox')||e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key===' '){e.preventDefault();play()}
+ else if(e.key==='ArrowRight'){e.preventDefault();pause();stepFwd()}
+ else if(e.key==='ArrowLeft'){e.preventDefault();stepBack()}
+ else if(e.key==='r'||e.key==='R'){e.preventDefault();reset()}
+});
+document.addEventListener('keyup',e=>{if(e.key===' '&&(e.target.tagName==='BUTTON'||e.target.type==='checkbox'))e.preventDefault()});
+function opts4(c){const o=[c];for(let d=1;o.length<4;d++){if(c+d>=0&&o.length<4)o.push(c+d);if(c-d>=0&&o.length<4)o.push(c-d)}return o.sort((a,b)=>a-b)}
+
+const cfg={R:10,S:25,Su:'pct',U:25,Uu:'pct',D:5,P:60,bad:false,undoAfter:-1};
+function resolve(){const R=cfg.R;
+ const sx=cfg.Su==='pct'?R*cfg.S/100:cfg.S, ux=cfg.Uu==='pct'?R*cfg.U/100:cfg.U;
+ let S=Math.ceil(sx),U=Math.floor(ux),fix=false;if(S===0&&U===0){U=1;fix=true}
+ return{R,S,U,sx,ux,fix}}
+function arith(){const r=resolve();
+ return 'maxSurge: '+(cfg.Su==='pct'?cfg.S+'% of '+r.R+' = '+r.sx+' &rarr; round UP = ':'absolute ')+'<b>'+r.S+'</b><br>maxUnavailable: '+(cfg.Uu==='pct'?cfg.U+'% of '+r.R+' = '+r.ux+' &rarr; round DOWN = ':'absolute ')+'<b>'+r.U+'</b>'+(r.fix?' (both were 0, so 1 is used)':'')+'<br>Surge cap = '+r.R+' + '+r.S+' = <b>'+(r.R+r.S)+'</b> pods; minimum available = '+r.R+' - '+r.U+' = <b>'+(r.R-r.U)+'</b>'}
+function build(){
+ const {R,S,U}=resolve(),cap=R+S,minAv=R-U,D=cfg.D,DL=cfg.P;
+ let pods=[],id=0,target='v2',t=0,lastProg=0,undone=false,steps=[];
+ for(let i=0;i<R;i++)pods.push({id:++id,ver:'v1',ready:true,age:0});
+ const isBad=v=>v==='v2'&&cfg.bad;
+ const stats=()=>({total:pods.length,ready:pods.filter(p=>p.ready).length,upd:pods.filter(p=>p.ver===target).length});
+ function snap(kind){const s=stats();return{t,kind,R,S,U,cap,minAv,target,pods:pods.map(p=>({id:p.id,ver:p.ver,ready:p.ready})),total:s.total,ready:s.ready,avail:s.ready,upd:s.upd,
+  rs:{v1:{n:pods.filter(p=>p.ver==='v1').length,r:pods.filter(p=>p.ver==='v1'&&p.ready).length},v2:{n:pods.filter(p=>p.ver==='v2').length,r:pods.filter(p=>p.ver==='v2'&&p.ready).length}},
+  left:Math.max(0,DL-(t-lastProg)),stalled:kind==='stall',complete:kind==='done',bad:cfg.bad}}
+ let nq=0;const asked={};
+ function push(kind,say,pred){const st={say:'t='+t+'s: '+say,view:snap(kind)};if(pred&&nq<5&&!asked[pred.key]){asked[pred.key]=1;nq++;st.predict=pred}steps.push(st);
+  if(cfg.undoAfter>=0&&!undone&&steps.length===cfg.undoAfter+1&&kind!=='done'){undone=true;doUndo();return true}return false}
+ function doUndo(){target='v1';lastProg=t;
+  const st={say:'t='+t+'s: kubectl rollout undo: the Deployment template goes back to the previous revision (rs-v1 becomes the new ReplicaSet again), so the rollout now moves towards v1.',view:null};st.view=snap('undo');steps.push(st)}
+ push('begin','You change the pod template, so the Deployment creates a new ReplicaSet (rs-v2) at 0 replicas and starts a rolling update of '+R+' replicas. Rules: surge cap '+cap+', min available '+minAv+'.',
+  {key:'cap',q:'Replicas='+R+', maxSurge resolves to '+S+'. At most how many pods in total may exist during the update?',opts:opts4(cap).map(String),correct:opts4(cap).indexOf(cap),why:'Cap = replicas + maxSurge = '+R+' + '+S+' = '+cap+'. maxSurge is rounded UP when given as a percentage.'});
+ let firstUp=true,firstDown=true,stallDone=false;
+ for(t=0;t<1500;t++){
+  if(t>0){const nr=[];pods.forEach(p=>{if(!p.ready){p.age++;if(!isBad(p.ver)&&p.age>=D){p.ready=true;nr.push(p)}}});
+   if(nr.length){const tg=nr.filter(p=>p.ver===target).length;if(tg)lastProg=t;
+    push('ready',nr.length+' pod'+(nr.length>1?'s':'')+' passed the readiness probe after '+D+'s, so available is now '+stats().ready+' and the controller may remove more old pods.')}}
+  // scale up
+  {const s=stats(),room=cap-s.total,add=Math.min(room,R-s.upd);
+   if(add>0){for(let i=0;i<add;i++)pods.push({id:++id,ver:target,ready:false,age:0});lastProg=t;
+    const fu=firstUp;firstUp=false;
+    push('up','Scale up the new ReplicaSet by '+add+': total allowed '+cap+' (replicas '+R+' + surge '+S+'), currently '+s.total+', so room is '+room+'.',
+     fu?{key:'up',q:'On the first sync, how many NEW pods will the controller create?',opts:opts4(Math.min(S,R)).map(String),correct:opts4(Math.min(S,R)).indexOf(Math.min(S,R)),why:'The new ReplicaSet can grow until total pods reach replicas + maxSurge = '+cap+'. With '+R+' old pods running, room = '+cap+' - '+R+' = '+Math.min(S,R)+'.'}:null)}}
+  // scale down
+  {const s=stats(),oldN=s.total-s.upd,newUnready=pods.filter(p=>p.ver===target&&!p.ready).length;let removed=0,cleaned=0;
+   const maxDown=s.total-minAv-newUnready;
+   if(oldN>0&&maxDown>0){
+    const un=pods.filter(p=>p.ver!==target&&!p.ready).slice(0,maxDown);
+    un.forEach(p=>pods.splice(pods.indexOf(p),1));cleaned=un.length;
+    const av=pods.filter(p=>p.ready).length,td=av-minAv;
+    if(td>0){const rd=pods.filter(p=>p.ver!==target&&p.ready).slice(0,td);rd.forEach(p=>pods.splice(pods.indexOf(p),1));removed=rd.length}
+    if(cleaned+removed>0){const fd=firstDown;firstDown=false;const av0=s.ready;
+     push('down','Scale down the old ReplicaSet by '+(cleaned+removed)+(cleaned?' ('+cleaned+' unhealthy removed first)':'')+': available '+av0+' - minimum '+minAv+' (replicas '+R+' - unavailable '+U+') = '+Math.max(0,av0-minAv)+' ready pods may go.',
+      fd?{key:'down',q:'Right now '+av0+' pods are available and the minimum is '+minAv+'. How many old pods can be terminated in this step?',opts:opts4(cleaned+removed).map(String),correct:opts4(cleaned+removed).indexOf(cleaned+removed),why:'Removable = available - (replicas - maxUnavailable) = '+av0+' - '+minAv+' = '+Math.max(0,av0-minAv)+(cleaned?', plus '+cleaned+' unhealthy old pod(s) that are cleaned up first':'')+'.'}:null)}}}
+  const s=stats();
+  if(s.total===R&&s.upd===R&&s.ready===R){
+   push('done','Rollout complete: all '+R+' pods run '+target+' and are Ready; the old ReplicaSet is at 0 replicas.'+(target==='v1'?' The rollback restored the previous version.':''),
+    {key:'done'+target,q:'When the rollout finishes, how many replicas does the OLD ReplicaSet keep?',opts:['0','1','maxUnavailable','replicas'],correct:0,why:'The old ReplicaSet is scaled to 0 but kept (revisionHistoryLimit) so that kubectl rollout undo can use it.'});break}
+  if(!stallDone&&t-lastProg>=DL){const b=undone;
+   const fired=push('stall','No progress for '+DL+'s (progressDeadlineSeconds). The Deployment condition Progressing becomes False with reason ProgressDeadlineExceeded. '+stats().ready+' pods stay available, so the app keeps serving. Click kubectl rollout undo.',
+    {key:'stall',q:'The new pods never become Ready and the deadline passes. What does the Deployment controller do?',opts:['Reports ProgressDeadlineExceeded and leaves the rollout as it is','Automatically rolls back to the old version','Deletes the old ReplicaSet','Scales all pods to zero'],correct:0,why:'The controller only reports the stalled rollout in the Deployment status. Rolling back is your decision (kubectl rollout undo) or your tooling.'});
+   if(fired){continue}break}
+ }
+ SIM.steps=steps;
+ SIM.init={t:0,kind:'init',R,S,U,cap,minAv,target:'v2',pods:Array.from({length:R},(_,i)=>({id:i+1,ver:'v1',ready:true})),total:R,ready:R,avail:R,upd:0,rs:{v1:{n:R,r:R},v2:{n:0,r:0}},left:DL,stalled:false,complete:false,bad:cfg.bad};
+ SIM.initSay='Replicas='+R+' running v1. Step to change the pod template to v2'+(cfg.bad?' (a bad version: its pods will never become Ready)':'')+'.';
+}
+App.render=function(v,s){
+ const cond=v.stalled?'<span class="warn">Progressing=False (ProgressDeadlineExceeded)</span>':(v.complete?'Progressing=True (NewReplicaSetAvailable)':'Progressing=True (ReplicaSetUpdated)');
+ let h='<div class="kv"><div>Desired<b>'+v.R+'</b></div><div>Current<b>'+v.total+'</b></div><div>Updated<b>'+v.upd+'</b></div><div>Ready<b>'+v.ready+'</b></div><div>Available<b>'+v.avail+'</b></div><div>Surge cap<b>'+v.cap+'</b></div><div>Min available<b>'+v.minAv+'</b></div><div>Time<b>'+v.t+'s</b></div></div>';
+ h+='<div class="note">Invariants: current '+v.total+' &le; cap '+v.cap+' '+(v.total<=v.cap?'<span class="ok">OK</span>':'<span class="bad">VIOLATED</span>')+'; available '+v.avail+' &ge; min '+v.minAv+' '+(v.avail>=v.minAv?'<span class="ok">OK</span>':'<span class="bad">VIOLATED</span>')+'</div>';
+ h+='<div class="scroll"><table><tr><th>ReplicaSet</th><th>Role</th><th>Replicas</th><th>Ready</th></tr>'+
+  ['v1','v2'].map(k=>'<tr><td class="rn">rs-'+k+'</td><td>'+(k===v.target?'new (target)':'old')+'</td><td>'+v.rs[k].n+'</td><td>'+v.rs[k].r+'</td></tr>').join('')+'</table></div>';
+ h+='<h3>Pods (solid = Ready, dashed = not Ready; v1 grey, v2 blue)</h3><div class="pods">'+v.pods.map(p=>'<div class="pd '+p.ver+(p.ready?' rd':' nr')+(!p.ready&&p.ver==='v2'&&v.bad?' bd':'')+'" title="pod '+p.id+'">'+p.ver+'-'+p.id+(p.ready?'':' ...')+'</div>').join('')+'</div>';
+ h+='<div>Condition: '+cond+'</div><div class="muted">Progress deadline remaining: '+v.left+'s</div><div class="bar"><i style="width:'+(cfg.P?Math.round(v.left*100/cfg.P):0)+'%"></i></div>';
+ $('#state').innerHTML=h;
+};
+App.afterRender=function(s){const v=s?s.view:SIM.init;$('#btnUndo').disabled=!(SIM.idx>=0&&!v.complete&&v.target==='v2')};
+App.summary=function(s){const v=s.view;return '<p>Final: '+v.R+' pods on '+v.target+', '+(v.stalled?'<span class="bad">rollout stalled</span>':'<span class="ok">rollout complete</span>')+'. Peak total pods observed: '+Math.max(...SIM.steps.map(x=>x.view.total))+' (cap '+v.cap+').</p>'};
+function readCfg(){cfg.R=+$('#R').value;cfg.S=+$('#S').value;cfg.Su=$('#Su').value;cfg.U=+$('#U').value;cfg.Uu=$('#Uu').value;cfg.D=+$('#D').value;cfg.P=+$('#P').value;cfg.bad=$('#bad').checked;
+ $('#vR').textContent=cfg.R;$('#vD').textContent=cfg.D;$('#vP').textContent=cfg.P;$('#resolved').innerHTML=arith()}
+['R','S','Su','U','Uu','D','P','bad'].forEach(i=>$('#'+i).addEventListener('input',()=>{readCfg();cfg.undoAfter=-1;reset()}));
+$('#btnUndo').onclick=()=>{if(SIM.idx<0)return;pause();cfg.undoAfter=SIM.idx;const keep=SIM.idx,ans=SIM.answers;build();SIM.answers=ans;SIM.idx=keep;
+ stepFwd();};
+const baseRebuild=()=>{cfg.undoAfter=-1;build()};
+App.rebuild=baseRebuild;readCfg();
+
+App.rebuild();render();
+</script></body></html>

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kubernetes scheduler simulator</title>
+<meta name="sim:title" content="Kubernetes scheduler simulator">
+<meta name="sim:topic" content="04-kubernetes">
+<meta name="sim:summary" content="Step a pod queue through the kube-scheduler cycle (queue, filter, score, bind) on 3 to 5 nodes with taints, selectors, affinity and zone spread.">
+<meta name="sim:concepts" content="kube-scheduler,scheduling framework,filter,score,bind,taints,tolerations,nodeSelector,node affinity,topology spread,Pending,FailedScheduling">
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--hi:#e8f1fc;--okbg:#dcf3e5;--badbg:#fbe1de;--warnbg:#fdf0d6;--focus:#7a3cff;--old:#9aa6b4;--new:#0b63c5}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--hi:#1b2a3c;--okbg:#14301f;--badbg:#3a1a18;--warnbg:#3a2c10;--focus:#b79bff;--old:#6b7787;--new:#5aa2f5}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1240px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}h3{font-size:.92rem;margin:12px 0 6px}
+.lede{margin:4px 0 12px;color:var(--muted)}.muted{color:var(--muted)}
+button,select,input{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover:not(:disabled){background:var(--hi)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number]{min-height:36px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);max-width:100%}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--accent)}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.bar-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.bar-ctl label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;border:1px solid var(--border);background:var(--card);font-size:.85rem}
+.say{padding:10px 14px;border-left:4px solid var(--accent);background:var(--hi);border-radius:6px;margin:8px 0;min-height:48px;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0;min-width:0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px}
+@media(min-width:960px){.grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.opts{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.opts button{text-align:left;white-space:normal}
+.opts button.right{background:var(--okbg);border-color:var(--ok)}.opts button.wrong{background:var(--badbg);border-color:var(--bad)}
+#quiz{border-color:var(--warn);background:var(--warnbg)}
+.scroll{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-align:top}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.kv div{border:1px solid var(--border);border-radius:6px;padding:4px 8px}.kv b{display:block;font-size:1.15rem}
+.bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.field{display:flex;flex-direction:column;gap:2px;margin:6px 0;min-width:0}.field>span{font-size:.85rem;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+svg{max-width:100%;height:auto;display:block}
+.simp li{margin:3px 0}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
+.node{border:1px solid var(--border);border-radius:8px;padding:8px;min-width:0;overflow-wrap:anywhere}
+.node.cur{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}.node.win{background:var(--okbg);border-color:var(--ok)}
+.node small{display:block;color:var(--muted)}.pill{display:inline-block;margin:2px 3px 0 0;padding:0 8px;border-radius:99px;border:1px solid var(--border);font-size:.78rem}
+.pill.p{background:var(--hi)}.pill.t{background:var(--warnbg)}
+.podrow{border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin:6px 0}
+.podrow .row{gap:6px 10px}.podrow label{display:inline-flex;align-items:center;gap:4px;min-height:32px;font-size:.85rem}
+.nrow{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:4px 0}
+.nrow b{min-width:34px}
+
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">&larr; Back to curriculum</a><h1>Kubernetes scheduler simulator</h1><button id="theme" aria-label="Toggle light or dark theme">Theme</button></header>
+<main>
+<p class="lede">Watch the scheduling cycle decide where each pod runs. Edit nodes and pods under Try it and the whole run is recomputed.</p>
+<div class="bar-ctl" role="group" aria-label="Playback controls">
+<button id="btnBack" aria-label="Back one step (Left arrow)">&#9664; Back</button>
+<button id="btnPlay" class="primary" aria-label="Play (Space)">&#9654; Play</button>
+<button id="btnStep" aria-label="Step forward (Right arrow)">Step &#9654;&#9654;</button>
+<button id="btnReset" aria-label="Reset (R)">&#8634; Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predict" checked aria-label="Predict first"> Predict first</label>
+
+<span class="chip" id="score" aria-live="polite">Score 0/0</span><span class="chip" id="stepinfo">Step 0 / 0</span>
+</div>
+<div id="say" class="say" role="status" aria-live="polite"></div>
+<section id="quiz" class="card" hidden aria-label="Prediction question"><h2>Predict first: what happens next?</h2><p></p><div class="opts"></div><div id="quizFb" role="status"></div></section>
+<div class="grid">
+<div>
+<section class="card" aria-label="Live state"><h2>Live state</h2><div id="state"></div></section>
+<section id="summary" class="card" hidden aria-label="Summary"></section>
+</div>
+<aside>
+<section class="card" id="tryit" aria-label="Try it"><h2>Try it (example values, edit and watch the outcome change)</h2><div class="field"><span>Number of nodes</span><select id="ncount" aria-label="Number of nodes"><option>3</option><option selected>4</option><option>5</option></select></div>
+<div id="nedit"></div><h3>Pods in the queue</h3><div id="pedit"></div>
+<div class="row"><button id="addpod" aria-label="Add a pod to the queue">+ Add pod</button></div></section>
+<section class="card simp" aria-label="Simplifications"><h2>Simplifications</h2><ul><li>Only the filters NodeUnschedulable-free flow is modelled: TaintToleration, NodeAffinity (nodeSelector + required), NodeResourcesFit (CPU and memory) and PodTopologySpread (hard, DoNotSchedule, topologyKey zone).</li>
+<li>Scoring uses NodeResourcesFit (LeastAllocated) and NodeAffinity (preferred, normalised to 0-100) only. The default framework has more score plugins (for example TaintToleration, PodTopologySpread, ImageLocality) which are omitted. Weights shown (1 and 2) are examples.</li>
+<li>Ties are broken at random by the real scheduler; here the first node wins.</li>
+<li>No preemption, no scheduling-gate or backoff queues, no percentageOfNodesToScore sampling, no PVC, ports or pod-affinity checks. A Pending pod is not retried.</li>
+<li>Real events add a trailing preemption sentence that is omitted. Node and pod sizes are example values.</li></ul>
+<p class="muted">All numbers shown are examples, not measurements. Keys: Space play/pause, Left back, Right step, R reset.</p></section>
+</aside></div>
+</main>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,timer:null,init:null,initSay:''};
+const App={};
+(function(){let t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+$('#theme').onclick=()=>{const n=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('dop:theme',n)}catch(e){};if(App.theme)App.theme()};
+function tally(){let a=0,r=0;for(const k in SIM.answers){a++;const s=SIM.steps[k];if(s&&s.predict&&SIM.answers[k]===s.predict.correct)r++}return{a,r}}
+function hideQuiz(){$('#quiz').hidden=true;SIM.pending=null}
+function render(){
+ const s=SIM.idx>=0?SIM.steps[SIM.idx]:null;
+ $('#say').textContent=s?s.say:SIM.initSay;
+ App.render(s?s.view:SIM.init,s);
+ $('#stepinfo').textContent='Step '+(SIM.idx+1)+' / '+SIM.steps.length;
+ $('#btnBack').disabled=SIM.idx<0;
+ const t=tally();$('#score').textContent='Score '+t.r+'/'+t.a;
+ const sm=$('#summary');
+ if(SIM.idx>=0&&SIM.idx===SIM.steps.length-1){
+  let h='<h2>Summary</h2><p><b>Prediction score: '+t.r+' / '+t.a+'</b>'+(t.a?'':' (turn on Predict first and reset to be quizzed)')+'</p>';
+  h+=(App.summary?App.summary(s):'');
+  const ks=Object.keys(SIM.answers).map(Number).sort((a,b)=>a-b);
+  if(ks.length){h+='<ol>';for(const k of ks){const p=SIM.steps[k].predict,ok=SIM.answers[k]===p.correct;
+   h+='<li><span class="'+(ok?'ok':'bad')+'">'+(ok?'Correct':'Missed')+'</span>: '+esc(p.q)+'<br><span class="muted">You chose: '+esc(p.opts[SIM.answers[k]])+'. Answer: '+esc(p.opts[p.correct])+'. '+esc(p.why)+'</span></li>'}h+='</ol>'}
+  sm.innerHTML=h;sm.hidden=false}else sm.hidden=true;
+ if(App.afterRender)App.afterRender(s);
+}
+function showQuiz(n){
+ const p=SIM.steps[n].predict;SIM.pending=n;
+ $('#quiz p').textContent=p.q;$('#quizFb').textContent='';
+ const o=$('#quiz .opts');o.innerHTML='';
+ p.opts.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.setAttribute('aria-label','Option '+(i+1)+': '+t);b.onclick=()=>answer(i);o.appendChild(b)});
+ $('#quiz').hidden=false;
+}
+function answer(i){
+ const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict;SIM.answers[n]=i;
+ [...$('#quiz .opts').children].forEach((b,j)=>{b.disabled=true;if(j===p.correct)b.classList.add('right');else if(j===i)b.classList.add('wrong')});
+ $('#quizFb').innerHTML='<b class="'+(i===p.correct?'ok':'bad')+'">'+(i===p.correct?'Correct. ':'Not quite. ')+'</b>'+esc(p.why);
+ SIM.pending=null;SIM.idx=n;render();
+}
+function pause(){if(SIM.timer){clearInterval(SIM.timer);SIM.timer=null}$('#btnPlay').innerHTML='&#9654; Play';$('#btnPlay').setAttribute('aria-label','Play (Space)')}
+function stepFwd(){
+ if(SIM.pending!==null)return false;
+ const n=SIM.idx+1;if(n>=SIM.steps.length){pause();return false}
+ const s=SIM.steps[n];
+ hideQuiz();
+ if($('#predict').checked&&s.predict&&SIM.answers[n]===undefined){showQuiz(n);pause();return false}
+ SIM.idx=n;render();return true;
+}
+function stepBack(){pause();hideQuiz();if(SIM.idx>=0){SIM.idx--;render()}}
+function reset(){pause();hideQuiz();SIM.answers={};SIM.idx=-1;App.rebuild();render()}
+function play(){
+ if(SIM.timer){pause();return}
+ if(SIM.idx>=SIM.steps.length-1)return;
+ $('#btnPlay').innerHTML='&#10074;&#10074; Pause';$('#btnPlay').setAttribute('aria-label','Pause (Space)');
+ const tick=()=>{if(!stepFwd())pause()};
+ SIM.timer=setInterval(tick,1300/parseFloat($('#speed').value));tick();
+}
+$('#speed').onchange=()=>{if(SIM.timer){clearInterval(SIM.timer);SIM.timer=setInterval(()=>{if(!stepFwd())pause()},1300/parseFloat($('#speed').value))}};
+$('#btnStep').onclick=()=>{pause();stepFwd()};$('#btnBack').onclick=stepBack;$('#btnPlay').onclick=play;$('#btnReset').onclick=reset;
+document.addEventListener('keydown',e=>{
+ const tg=e.target.tagName,ty=e.target.type;if(tg==='SELECT'||tg==='TEXTAREA'||(tg==='INPUT'&&ty!=='checkbox')||e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key===' '){e.preventDefault();play()}
+ else if(e.key==='ArrowRight'){e.preventDefault();pause();stepFwd()}
+ else if(e.key==='ArrowLeft'){e.preventDefault();stepBack()}
+ else if(e.key==='r'||e.key==='R'){e.preventDefault();reset()}
+});
+document.addEventListener('keyup',e=>{if(e.key===' '&&(e.target.tagName==='BUTTON'||e.target.type==='checkbox'))e.preventDefault()});
+function opts4(c){const o=[c];for(let d=1;o.length<4;d++){if(c+d>=0&&o.length<4)o.push(c+d);if(c-d>=0&&o.length<4)o.push(c-d)}return o.sort((a,b)=>a-b)}
+
+const ZONES=['zone-a','zone-a','zone-b','zone-b','zone-c'],LAB=[{disk:'ssd'},{},{},{disk:'ssd'},{}];
+const cfg={ncount:4,nodes:[{cpu:4,mem:8,taint:false},{cpu:2,mem:4,taint:false},{cpu:4,mem:8,taint:true},{cpu:2,mem:4,taint:false},{cpu:4,mem:8,taint:false}],
+ pods:[],seq:0};
+function mkPod(n,cpu,mem,f){return Object.assign({name:n,cpu,mem,sel:false,tol:false,req:false,pref:false,spread:false},f||{})}
+function defaults(){cfg.pods=[mkPod('web-1',500,512,{spread:1}),mkPod('web-2',500,512,{spread:1}),mkPod('web-3',500,512,{spread:1}),
+ mkPod('db-0',1000,2048,{sel:1}),mkPod('gpu-job',1000,1024,{tol:1}),mkPod('batch-big',3000,4096,{pref:1})];cfg.seq=cfg.pods.length}
+defaults();
+function nodeList(){return cfg.nodes.slice(0,cfg.ncount).map((n,i)=>({name:'node-'+(i+1),zone:ZONES[i],labels:Object.assign({zone:ZONES[i]},LAB[i]),cpuCap:n.cpu*1000,memCap:n.mem*1024,cpuUsed:0,memUsed:0,pods:[],taint:n.taint}))}
+const matchSel=(p,n)=>!p.sel||n.labels.disk==='ssd';
+const matchReq=(p,n)=>!p.req||n.zone!=='zone-c';
+function build(){
+ const nodes=nodeList(),pods=cfg.pods,steps=[],placed={},pendingList=[];
+ const snap=(cur,phase,extra)=>Object.assign({nodes:JSON.parse(JSON.stringify(nodes)),queue:pods.filter((p,i)=>i>idxNow&&true).map(p=>p.name),pending:pendingList.slice(),cur:cur,phase:phase,rows:null,scores:null,winner:null,event:null},extra||{});
+ let idxNow=-1;const asked={};let nq=0;
+ function lq(kind,key){if(nq>=5||asked[kind+key])return false;asked[kind+key]=1;nq++;return true}
+ pods.forEach((p,pi)=>{
+  idxNow=pi;
+  steps.push({say:'Queue: the scheduler takes "'+p.name+'" ('+p.cpu+'m CPU, '+p.mem+'Mi memory) from the head of the scheduling queue and starts a scheduling cycle.',view:snap(p.name,'queue')});
+  // filter
+  const rows=[];
+  const dom=nodes.filter(n=>matchSel(p,n)&&matchReq(p,n));
+  const zc={};dom.forEach(n=>{zc[n.zone]=zc[n.zone]||0});
+  nodes.forEach(n=>{n.pods.forEach(q=>{if(q.spread&&zc[n.zone]!==undefined)zc[n.zone]++})});
+  const zmin=Math.min(...Object.values(zc).concat([0]).slice(0,Object.keys(zc).length||1));
+  nodes.forEach(n=>{
+   let r=null,key=null;
+   if(n.taint&&!p.tol){r='untolerated taint {dedicated: gpu}';key='node(s) had untolerated taint {dedicated: gpu}'}
+   else if(!matchSel(p,n)||!matchReq(p,n)){r="does not match nodeSelector / node affinity";key="node(s) didn't match Pod's node affinity/selector"}
+   else{const lack=[];if(p.cpu>n.cpuCap-n.cpuUsed)lack.push('cpu');if(p.mem>n.memCap-n.memUsed)lack.push('memory');
+    if(lack.length){r='Insufficient '+lack.join(' and ');key=lack.map(x=>'Insufficient '+x)}
+    else if(p.spread){const skew=zc[n.zone]+1-zmin;if(skew>1){r='topology spread skew '+skew+' > maxSkew 1 ('+n.zone+' has '+zc[n.zone]+', min is '+zmin+')';key="node(s) didn't match pod topology spread constraints"}}}
+   rows.push({node:n.name,ok:!r,reason:r||'passes all filters',key:key})});
+  const feas=rows.filter(r=>r.ok).map(r=>r.node);
+  const cnt={};rows.forEach(r=>{if(r.key)[].concat(r.key).forEach(k=>cnt[k]=(cnt[k]||0)+1)});
+  const msg='0/'+nodes.length+' nodes are available: '+Object.entries(cnt).sort((a,b)=>b[1]-a[1]||(a[0]<b[0]?-1:1)).map(([k,v])=>v+' '+k).join(', ')+'.';
+  const fs={say:'Filter: '+feas.length+' of '+nodes.length+' nodes can run "'+p.name+'"'+(feas.length?' ('+feas.join(', ')+').':', so it cannot be scheduled now.'),view:snap(p.name,'filter',{rows:rows})};
+  if(feas.length===0){if(lq('pend','')) fs.predict={q:'Filtering "'+p.name+'" is about to finish. What will happen to this pod?',opts:['It stays Pending and an event explains why','It is bound to the least-loaded node anyway','It is deleted by the scheduler','It starts on a tainted node'],correct:0,why:'If no node passes filtering the pod is unschedulable: it stays Pending and the scheduler records a FailedScheduling event.'}}
+  else if(pi===0||(feas.length<nodes.length&&lq('cnt',pi>0?'x':'first')&&pi>0)){
+   if(pi===0)lq('cnt','first');
+   const o=opts4(feas.length).filter(v=>v<=nodes.length);while(o.length<2)o.push(o.length);
+   fs.predict={q:'How many of the '+nodes.length+' nodes will pass the filter phase for "'+p.name+'"?',opts:o.map(v=>v+(v===1?' node':' nodes')),correct:o.indexOf(feas.length),why:'Filters remove nodes with untolerated taints, non-matching selector or affinity, not enough free requests, or a zone that would break the topology spread skew. '+rows.filter(r=>!r.ok).map(r=>r.node+': '+r.reason).join('; ')+'.'}}
+  steps.push(fs);
+  if(!feas.length){pendingList.push(p.name);placed[p.name]=null;
+   steps.push({say:'Unschedulable: no node passed filtering, so "'+p.name+'" stays Pending and the scheduler records a FailedScheduling event.',view:snap(p.name,'pending',{rows:rows,event:'Warning  FailedScheduling  default-scheduler  '+msg})});return}
+  // score
+  const maxAff=Math.max(0,...feas.map(nm=>p.pref&&nodes.find(n=>n.name===nm).zone==='zone-b'?80:0));
+  const sc=feas.map(nm=>{const n=nodes.find(x=>x.name===nm);
+   const c=Math.floor((n.cpuCap-n.cpuUsed-p.cpu)*100/n.cpuCap),m=Math.floor((n.memCap-n.memUsed-p.mem)*100/n.memCap),fit=Math.floor((c+m)/2);
+   const raw=p.pref&&n.zone==='zone-b'?80:0,aff=maxAff?Math.floor(raw*100/maxAff):0;
+   return {node:nm,c:c,m:m,fit:fit,aff:aff,total:fit*1+aff*2}});
+  let best=sc[0];sc.forEach(s=>{if(s.total>best.total)best=s});
+  const ss={say:'Score: feasible nodes are ranked; "'+best.node+'" wins with '+best.total+' (LeastAllocated prefers the emptier node'+(p.pref?'; the preferred zone-b affinity adds weight':'')+').',view:snap(p.name,'score',{rows:rows,scores:sc,winner:best.node})};
+  if(sc.length>=2&&(pi===0||p.pref||p.spread)&&lq('win',p.pref?'pref':(pi===0?'first':'sp'))){
+   ss.predict={q:'Several nodes passed filtering for "'+p.name+'". Which node will score highest?',opts:sc.map(s=>s.node),correct:sc.indexOf(best),why:'Score = NodeResourcesFit LeastAllocated x1 + NodeAffinity x2 (example weights). '+sc.map(s=>s.node+'='+s.total).join(', ')+'.'}}
+  steps.push(ss);
+  const bn=nodes.find(n=>n.name===best.node);bn.cpuUsed+=p.cpu;bn.memUsed+=p.mem;bn.pods.push({name:p.name,spread:p.spread});placed[p.name]=best.node;
+  steps.push({say:'Bind: the scheduler tells the API server to bind "'+p.name+'" to '+best.node+'; the node now has '+bn.cpuUsed+'m of '+bn.cpuCap+'m CPU requested.',view:snap(p.name,'bind',{winner:best.node,event:'Normal  Scheduled  default-scheduler  Successfully assigned default/'+p.name+' to '+best.node})});
+ });
+ idxNow=pods.length;
+ SIM.steps=steps;SIM.placed=placed;
+ SIM.init={nodes:nodes,queue:pods.map(p=>p.name),pending:[],cur:null,phase:'idle',rows:null,scores:null,winner:null,event:null};
+ SIM.initSay='Press Step or Play. '+pods.length+' pods are queued against '+nodes.length+' nodes. Each pod goes through queue, filter, score, bind.';
+}
+const pill=(t,c)=>'<span class="pill '+(c||'')+'">'+esc(t)+'</span>';
+App.render=function(v,s){
+ let h='<div class="kv"><div>Phase<b>'+esc(v.phase)+'</b></div><div>Current pod<b>'+esc(v.cur||'-')+'</b></div><div>Queue<b>'+v.queue.length+'</b></div><div>Pending<b>'+v.pending.length+'</b></div></div>';
+ h+='<div class="muted">Queue: '+(v.queue.map(esc).join(', ')||'empty')+' | Pending: '+(v.pending.map(esc).join(', ')||'none')+'</div><h3>Nodes</h3><div class="nodes">';
+ v.nodes.forEach(n=>{const cp=Math.round(n.cpuUsed*100/n.cpuCap),mp=Math.round(n.memUsed*100/n.memCap);
+  const cls=(s&&s.view.winner===n.name&&(v.phase==='score'||v.phase==='bind')?' win':'');
+  h+='<div class="node'+cls+'"><b>'+n.name+'</b> <small>'+esc(Object.entries(n.labels).map(e=>e.join('=')).join(', '))+'</small>'+(n.taint?pill('taint dedicated=gpu:NoSchedule','t'):'')+
+   '<small>CPU '+n.cpuUsed+'m / '+n.cpuCap+'m ('+cp+'%)</small><div class="bar"><i style="width:'+cp+'%"></i></div><small>Mem '+n.memUsed+'Mi / '+n.memCap+'Mi ('+mp+'%)</small><div class="bar"><i style="width:'+mp+'%"></i></div>'+
+   n.pods.map(p=>pill(p.name,'p')).join('')+'</div>'});
+ h+='</div>';
+ if(v.rows){h+='<h3>Filter results for '+esc(v.cur)+'</h3><div class="scroll"><table><tr><th>Node</th><th>Result</th><th>Reason</th></tr>'+v.rows.map(r=>'<tr><td>'+r.node+'</td><td class="'+(r.ok?'ok':'bad')+'">'+(r.ok?'Feasible':'Filtered out')+'</td><td>'+esc(r.reason)+'</td></tr>').join('')+'</table></div>'}
+ if(v.scores){h+='<h3>Scores (example weights: fit x1, affinity x2)</h3><div class="scroll"><table><tr><th>Node</th><th>CPU free %</th><th>Mem free %</th><th>Fit (avg)</th><th>Affinity (0-100)</th><th>Total</th></tr>'+v.scores.map(r=>'<tr><td>'+r.node+(r.node===v.winner?' &#9733;':'')+'</td><td>'+r.c+'</td><td>'+r.m+'</td><td>'+r.fit+'</td><td>'+r.aff+'</td><td><b>'+r.total+'</b> = '+r.fit+' + 2 x '+r.aff+'</td></tr>').join('')+'</table></div>'}
+ if(v.event)h+='<h3>Event</h3><pre>'+esc(v.event)+'</pre>';
+ $('#state').innerHTML=h;
+};
+App.summary=function(){let h='<ul>';for(const p of cfg.pods){const n=SIM.placed[p.name];h+='<li>'+esc(p.name)+': '+(n?'<span class="ok">Running on '+n+'</span>':'<span class="bad">Pending</span>')+'</li>'}return h+'</ul>'};
+function sel(id,vals,cur,fn){const e=document.createElement('select');e.id=id;vals.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v[1]||v;o.selected=(v==cur);e.appendChild(o)});return e}
+function drawEdit(){
+ const ne=$('#nedit');ne.innerHTML='';
+ for(let i=0;i<cfg.ncount;i++){const n=cfg.nodes[i],d=document.createElement('div');d.className='nrow';
+  d.innerHTML='<b>node-'+(i+1)+'</b><label>CPU <select data-n="'+i+'" data-k="cpu" aria-label="node-'+(i+1)+' CPU cores">'+[1,2,4,8].map(v=>'<option'+(v===n.cpu?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'+
+   '<label>Mem GiB <select data-n="'+i+'" data-k="mem" aria-label="node-'+(i+1)+' memory GiB">'+[2,4,8,16].map(v=>'<option'+(v===n.mem?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'+
+   '<label><input type="checkbox" data-n="'+i+'" data-k="taint"'+(n.taint?' checked':'')+' aria-label="node-'+(i+1)+' gpu taint"> taint</label><span class="muted">'+ZONES[i]+(LAB[i].disk?', disk=ssd':'')+'</span>';ne.appendChild(d)}
+ const pe=$('#pedit');pe.innerHTML='';
+ cfg.pods.forEach((p,i)=>{const d=document.createElement('div');d.className='podrow';
+  const cb=(k,l)=>'<label><input type="checkbox" data-p="'+i+'" data-k="'+k+'"'+(p[k]?' checked':'')+' aria-label="'+esc(p.name)+' '+l+'"> '+l+'</label>';
+  d.innerHTML='<div class="row"><b>'+esc(p.name)+'</b><label>CPU m <select data-p="'+i+'" data-k="cpu" aria-label="'+esc(p.name)+' CPU request">'+[250,500,1000,2000,3000].map(v=>'<option'+(v===p.cpu?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'+
+   '<label>Mem Mi <select data-p="'+i+'" data-k="mem" aria-label="'+esc(p.name)+' memory request">'+[256,512,1024,2048,4096].map(v=>'<option'+(v===p.mem?' selected':'')+'>'+v+'</option>').join('')+'</select></label>'+
+   '<button data-del="'+i+'" aria-label="Remove '+esc(p.name)+'">Remove</button></div><div class="row">'+cb('sel','nodeSelector disk=ssd')+cb('tol','tolerates gpu taint')+cb('req','required zone != zone-c')+cb('pref','prefer zone-b (w80)')+cb('spread','spread over zones')+'</div>';pe.appendChild(d)});
+}
+document.addEventListener('change',e=>{const t=e.target;if(t.id==='ncount'){cfg.ncount=+t.value;drawEdit();reset();return}
+ if(t.dataset.n!==undefined){const n=cfg.nodes[+t.dataset.n];n[t.dataset.k]=t.dataset.k==='taint'?t.checked:+t.value;reset()}
+ else if(t.dataset.p!==undefined){const p=cfg.pods[+t.dataset.p];p[t.dataset.k]=t.type==='checkbox'?t.checked:+t.value;reset()}});
+document.addEventListener('click',e=>{const t=e.target;if(t.dataset&&t.dataset.del!==undefined){cfg.pods.splice(+t.dataset.del,1);drawEdit();reset()}});
+$('#addpod').onclick=()=>{cfg.seq++;cfg.pods.push(mkPod('app-'+cfg.seq,500,512,{}));drawEdit();reset()};
+App.rebuild=build;drawEdit();
+
+App.rebuild();render();
+</script></body></html>

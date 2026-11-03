@@ -1,0 +1,17 @@
+{
+ "01-linux": 236,
+ "00-roadmap-prerequisites": 112,
+ "10-aws": 879,
+ "03-docker": 260,
+ "02-sdlc-agile-devops": 216,
+ "04-kubernetes": 634,
+ "08-elk-stack": 130,
+ "09-python-devops": 223,
+ "07-monitoring-alerting": 183,
+ "05-terraform": 233,
+ "06-cicd": 248,
+ "12-gcp": 184,
+ "13-architecture-decisions": 214,
+ "11-azure": 180,
+ "14-sample-app-shop": 260
+}

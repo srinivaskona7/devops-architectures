@@ -1,0 +1,256 @@
+site:
+  title: DevOps & Cloud Architecture Path
+  tagline: From first Linux command to architect-level decisions
+  words_per_page: 400
+folders:
+- slug: 00-roadmap-prerequisites
+  title: Roadmap and Prerequisites
+  short: Roadmap
+  accent: '#22d3ee'
+  pages: 60
+  level: Beginner
+  tagline: How the path works, the roles it prepares you for, and the networking and Git you need first.
+  outline:
+  - 'How to use this curriculum: self-paced plan, ten-hour core path, how to run labs'
+  - 'The role map: DevOps engineer, SRE, cloud engineer, architect'
+  - 'Networking essentials: IP, DNS, HTTP, TLS, ports, load balancing'
+  - 'Git essentials: commits, branches, merging, pull requests'
+  - 'Roadmap and milestones: beginner to architect'
+  - 'Lab setup: local tools, safe cloud accounts, cost control'
+- slug: 01-linux
+  title: Linux Fundamentals
+  short: Linux
+  accent: '#fbbf24'
+  pages: 260
+  level: Beginner
+  tagline: The operating system under every container, node and pipeline.
+  outline:
+  - 'Filesystem and navigation: hierarchy, links, find, archives'
+  - 'Users, groups and permissions: chmod, umask, sudo, ACLs'
+  - 'Processes, signals and systemd: units, services, targets'
+  - 'Packages and software: apt, dnf, repositories, building'
+  - 'Shell, pipes and text tools: grep, sed, awk, jq, xargs'
+  - 'Bash scripting: variables, tests, loops, functions, safe scripts'
+  - 'Networking tools: ip, ss, curl, dig, tcpdump, nftables'
+  - 'Storage: block devices, filesystems, LVM, mounts, quotas'
+  - 'Performance and troubleshooting: USE method, top, vmstat, iostat, strace'
+  - 'Security hardening: SSH, sudo, SELinux and AppArmor, auditing'
+  - 'Kernel features behind containers: namespaces, cgroups, capabilities'
+  - Logging, cron, timers and backups
+- slug: 02-sdlc-agile-devops
+  title: SDLC, Agile and DevOps
+  short: SDLC
+  accent: '#34d399'
+  pages: 167
+  level: Beginner
+  tagline: How software is planned, built and released, and the principles DevOps adds.
+  outline:
+  - SDLC phases and artifacts
+  - 'SDLC models: waterfall, V-model, iterative, spiral, agile, DevOps'
+  - 'Agile in practice: Scrum, Kanban, XP, estimation, ceremonies'
+  - 'DevOps principles: CALMS, the Three Ways, DORA metrics, value streams'
+  - 'Environments and release strategies: dev, staging, production, branching, flags'
+  - 'Quality and security in the lifecycle: test pyramid, DevSecOps, SBOM'
+  - 'SRE principles: SLIs, SLOs, error budgets, toil, incidents, postmortems'
+- slug: 03-docker
+  title: Docker and Containers
+  short: Docker
+  accent: '#60a5fa'
+  pages: 220
+  level: Beginner
+  tagline: Packaging software so it runs the same everywhere.
+  outline:
+  - Containers versus virtual machines, images and layers
+  - 'Dockerfile in depth: instructions, caching, multi-stage builds'
+  - 'Running containers: volumes, networks, Compose'
+  - Registries, tags, digests and supply chain
+  - Image security and hardening
+  - 'Runtime internals: OCI, containerd, runc'
+  - Debugging containers
+  - 'Docker in CI: BuildKit, cache, build performance'
+- slug: 04-kubernetes
+  title: Kubernetes
+  short: Kubernetes
+  accent: '#a78bfa'
+  pages: 520
+  level: Intermediate
+  tagline: Running, scaling and healing containers across a fleet of machines.
+  outline:
+  - 'Architecture: control plane, nodes, the API and controllers'
+  - 'Workloads: Pods, Deployments, StatefulSets, DaemonSets, Jobs'
+  - 'Networking: Services, DNS, Ingress and Gateway API'
+  - 'Configuration and storage: ConfigMaps, Secrets, PV, PVC, CSI'
+  - 'Scheduling and scaling: requests, limits, affinity, taints, HPA, VPA, KEDA'
+  - 'Security: RBAC, Pod Security, NetworkPolicy, admission control'
+  - 'Packaging: Helm and Kustomize'
+  - Observability and troubleshooting
+  - Cluster lifecycle and upgrades
+  - Service mesh overview
+  - Multi-tenancy and cost
+  - CRDs and operators
+- slug: 05-terraform
+  title: Terraform
+  short: Terraform
+  accent: '#f472b6'
+  pages: 230
+  level: Intermediate
+  tagline: Describing infrastructure as code and changing it safely.
+  outline:
+  - Infrastructure as code and the Terraform workflow
+  - 'HCL language: types, expressions, loops, conditionals'
+  - Providers, resources and data sources
+  - State, backends and locking
+  - Modules and composition
+  - 'Environment strategy: directories, workspaces, Terragrunt'
+  - 'Testing and policy: validate, tflint, checkov, terraform test'
+  - Drift, import and refactoring
+  - Terraform in CI with OIDC
+- slug: 06-cicd
+  title: CI/CD
+  short: CI/CD
+  accent: '#fb923c'
+  pages: 260
+  level: Intermediate
+  tagline: Pipelines that build, test, secure and ship every change.
+  outline:
+  - CI/CD concepts and pipeline design
+  - GitHub Actions in depth
+  - 'Jenkins: architecture, Jenkinsfile, agents, shared libraries'
+  - Choosing between GitHub Actions, Jenkins and others
+  - GitOps with Argo CD and Flux
+  - Artifacts and supply chain security
+  - Deployment strategies in pipelines
+  - Pipeline security and secrets
+- slug: 07-monitoring-alerting
+  title: Monitoring and Alerting
+  short: Monitoring
+  accent: '#2dd4bf'
+  pages: 190
+  level: Intermediate
+  tagline: Prometheus, Grafana and Alertmanager, and how to alert on what matters.
+  outline:
+  - Observability pillars and what to measure
+  - 'Prometheus: data model, scraping, PromQL, exporters, rules'
+  - 'Grafana: dashboards that answer questions'
+  - Alertmanager and alert design
+  - SLO-based alerting and burn rates
+  - kube-prometheus-stack on Kubernetes
+  - Tracing and OpenTelemetry overview
+- slug: 08-elk-stack
+  title: ELK Stack
+  short: ELK
+  accent: '#facc15'
+  pages: 130
+  level: Intermediate
+  tagline: Centralised logs with Elasticsearch, Logstash and Kibana.
+  outline:
+  - Logging architecture and structured logs
+  - 'Elasticsearch internals: indices, shards, mappings, lifecycle'
+  - 'Ingest pipelines: Beats, Logstash, Elastic Agent'
+  - 'Kibana: search, dashboards, alerting'
+  - ELK on Kubernetes with ECK and Filebeat
+  - Capacity, retention and cost; ELK versus Loki and OpenSearch
+- slug: 09-python-devops
+  title: Python for DevOps
+  short: Python
+  accent: '#4ade80'
+  pages: 223
+  level: Intermediate
+  tagline: 'Where Python earns its place: automation, cloud SDKs and monitoring tools.'
+  outline:
+  - 'Python for operations: environments, packaging, typing'
+  - Files, processes, CLIs and logging
+  - HTTP, APIs, JSON and YAML
+  - 'Cloud SDKs: boto3 and the Azure and Google equivalents'
+  - Kubernetes client and operators
+  - 'Automation patterns: idempotency, retries, tests with pytest and moto'
+  - 'Monitoring tools in Python: exporters, alerts, log parsing'
+  - Shipping scripts as tools
+- slug: 10-aws
+  title: Amazon Web Services
+  short: AWS
+  accent: '#f59e0b'
+  pages: 760
+  level: Advanced
+  tagline: VPC, EC2, S3, RDS, Auto Scaling, load balancing, IAM and EKS.
+  outline:
+  - Accounts, Organizations and IAM
+  - VPC design
+  - EC2, AMIs and purchasing options
+  - 'Load balancing: ALB, NLB, GWLB'
+  - Auto Scaling
+  - S3
+  - RDS and Aurora
+  - 'EKS: architecture, networking, identity, add-ons'
+  - 'Supporting services: ECR, ExternalDNS, Karpenter'
+  - Security and governance
+  - Well-Architected reference design
+  - Cost management
+- slug: 11-azure
+  title: Microsoft Azure
+  short: Azure
+  accent: '#38bdf8'
+  pages: 179
+  level: Advanced
+  tagline: Azure equivalents, AKS deployment options and the same app on Azure.
+  outline:
+  - Service map and equivalents to AWS
+  - Entra ID and RBAC
+  - Virtual networks
+  - VMs, scale sets and load balancing
+  - Storage and databases
+  - 'AKS: Standard versus Automatic, node pools, networking, upgrades'
+  - Deploying the shop on Azure
+- slug: 12-gcp
+  title: Google Cloud
+  short: GCP
+  accent: '#818cf8'
+  pages: 183
+  level: Advanced
+  tagline: GCP equivalents, GKE deployment options and the same app on Google Cloud.
+  outline:
+  - Service map and equivalents to AWS
+  - Projects, folders and IAM
+  - VPC and load balancing
+  - Compute Engine, instance groups and storage
+  - 'Databases: Cloud SQL, Spanner'
+  - 'GKE: Autopilot versus Standard, release channels, upgrades'
+  - Deploying the shop on Google Cloud
+- slug: 13-architecture-decisions
+  title: Architecture and Decisions
+  short: Architecture
+  accent: '#e879f9'
+  pages: 213
+  level: Advanced
+  tagline: How to choose tools and services, and defend the choice.
+  outline:
+  - The architect mindset and decision records
+  - Well-Architected pillars across clouds
+  - 'Choosing compute: VMs, containers, serverless'
+  - Choosing data stores
+  - Network topologies and account structure
+  - High availability and disaster recovery
+  - Multi-cloud trade-offs
+  - FinOps
+  - Tool selection matrix
+  - Case studies and interview practice
+- slug: 14-sample-app-shop
+  title: Sample Application - The Shop
+  short: Shop
+  accent: '#f87171'
+  pages: 250
+  level: Advanced
+  tagline: An e-commerce app with UPI payments, built, deployed and handed over end to end.
+  outline:
+  - Architecture and requirements
+  - 'The application: catalog, cart, orders, payments, mock UPI gateway'
+  - Environments and branching
+  - Local development with Docker Compose
+  - Infrastructure with Terraform
+  - Kubernetes manifests with Kustomize overlays
+  - GitHub Actions pipelines
+  - Jenkins pipeline
+  - Deploying to EKS and upgrading the cluster
+  - Observability setup
+  - 'Handover: runbooks, documentation and disaster recovery'
+  - The same app on Azure and GCP

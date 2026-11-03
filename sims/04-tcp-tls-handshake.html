@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TCP and TLS handshake simulator</title>
+<meta name="sim:title" content="TCP and TLS handshake simulator">
+<meta name="sim:topic" content="00-roadmap-prerequisites">
+<meta name="sim:summary" content="Step through the TCP three-way handshake and TLS 1.3 (vs TLS 1.2, resumption, 0-RTT and QUIC) and compute time to first byte.">
+<meta name="sim:concepts" content="tcp,three-way handshake,tls 1.3,tls 1.2,resumption,0-rtt,quic,http/3,rtt,ttfb">
+<style>:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#5a6572;--card:#fff;--border:#cfd6de;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--net:#d6e8ff;--host:#ffe9c7;--hi:#e8f1fc;--focus:#7a3cff}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--net:#1c3a5e;--host:#4a3410;--hi:#1b2a3c;--focus:#b79bff}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1200px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}
+.lede{margin:4px 0 12px;color:var(--muted)}
+button,select,input,textarea{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover{background:var(--hi)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number],input[type=text]{min-height:40px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-width:100%}
+input[type=checkbox]{width:20px;height:20px;vertical-align:middle}
+input[type=range]{width:100%;min-height:36px}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.controls label{display:inline-flex;align-items:center;gap:6px;min-height:40px}
+.chip{display:inline-block;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:.85rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;min-width:0;overflow-wrap:anywhere}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+@media(min-width:900px){.grid{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+.say{margin:10px 0 0;padding:8px 10px;border-left:4px solid var(--accent);background:var(--hi);border-radius:4px;min-height:2.6em}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.tw{overflow-x:auto;max-width:100%}
+.quiz{border-color:var(--accent);border-width:2px}
+.quiz .opts{display:grid;gap:8px;margin:8px 0}
+.quiz .opts button{text-align:left;white-space:normal}
+.quiz .opts button.right{border-color:var(--ok);background:var(--hi)}
+.quiz .opts button.wrong{border-color:var(--bad)}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}.warnc{color:var(--warn);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:6px 0}
+.row>label{display:flex;flex-direction:column;gap:2px;min-width:0}
+.note ul{margin:4px 0 0 18px;padding:0}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.mono{overflow-wrap:anywhere}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">← Back to curriculum</a><h1>TCP and TLS handshake simulator</h1><button id="btnTheme" aria-label="Toggle light or dark theme">◐ Theme</button></header>
+<main>
+<p class="lede">Watch packets travel between a client and a server, then change the round-trip time to see how many round trips each design costs before the first byte.</p>
+<section class="controls" aria-label="Playback controls">
+<button id="btnReset" aria-label="Reset simulation (R)">↺ Reset</button>
+<button id="btnBack" aria-label="Previous step (Left arrow)">◀ Back</button>
+<button id="btnPlay" class="primary" aria-label="Play or pause (Space)">▶ Play</button>
+<button id="btnStep" aria-label="Next step (Right arrow)">Step ▶</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predictToggle" checked aria-label="Predict first"> Predict first</label>
+<span id="stepinfo" class="chip" aria-live="off">Step 0 / 0</span><span id="score" class="chip">Score 0/0</span>
+</section>
+<section id="quiz" class="card quiz" aria-live="polite" hidden></section>
+<div class="grid">
+<div>
+<section class="card"><h2>Timeline: client ⇄ server</h2>
+<div id="stage"></div>
+<p class="say" id="say" aria-live="polite">Press Step or Play to begin. Pick a scenario under “Try it”.</p></section>
+<section class="card"><h2>Time to first byte (TTFB) — example arithmetic</h2><div id="ttfb"></div></section>
+</div>
+<div>
+<section class="card"><h2>Try it</h2>
+<div class="row"><label>Scenario <select id="mode" aria-label="Handshake scenario">
+<option value="tls13">TCP + TLS 1.3 (full handshake)</option>
+<option value="tls12">TCP + TLS 1.2 (full, two round trips)</option>
+<option value="resume">TCP + TLS 1.3 session resumption (PSK)</option>
+<option value="zero">TCP + TLS 1.3 resumption with 0-RTT data</option>
+<option value="h3">HTTP/3 over QUIC (new connection)</option>
+<option value="h3zero">HTTP/3 over QUIC with 0-RTT resumption</option></select></label></div>
+<div class="row"><label style="flex:1 1 200px">Round-trip time (example): <b id="rttv">80 ms</b>
+<input type="range" id="rtt" min="10" max="300" step="10" value="80" aria-label="Round trip time in milliseconds"></label></div>
+<div class="row"><label style="flex:1 1 200px">Server think time (example): <b id="thinkv">20 ms</b>
+<input type="range" id="think" min="0" max="200" step="10" value="20" aria-label="Server processing time in milliseconds"></label></div>
+</section>
+<section class="card"><h2>Live state</h2><div class="tw"><table id="state" aria-label="Connection state"></table></div></section>
+<section class="card"><h2>Compare all scenarios at this RTT</h2><div class="tw"><table id="cmp" aria-label="Comparison of scenarios"></table></div></section>
+<section class="card"><h2>Notes</h2><ul style="margin:0 0 0 18px;padding:0">
+<li><b>0-RTT replay:</b> early data in TLS 1.3 (RFC 8446 §2.3, §8) is not replay-safe. A network attacker can duplicate it, so servers should only accept idempotent requests in 0-RTT.</li>
+<li>TLS 1.3 resumption still takes one round trip; 0-RTT removes the wait only for the first client flight.</li></ul></section>
+</div></div>
+<section id="summary" class="card" hidden aria-live="polite"></section>
+<section class="card note"><h2>Simplifications</h2><ul><li>Packets are shown as one message per arrow; real stacks batch, retransmit and split packets, and TCP/TLS records can be coalesced.</li><li>TLS 1.2 is shown with an ECDHE suite and no session tickets; extensions, HelloRetryRequest, client certificates and TLS record sizes are omitted.</li><li>Time is modelled as half an RTT per one-way trip; no bandwidth, loss, congestion window, certificate size or handshake CPU time. Server think time is a single example number.</li><li>The first HTTP request is assumed to fit in one flight; DNS lookup time is excluded; QUIC is shown only at the level of its handshake (no packet numbers, address validation or Retry).</li><li>0-RTT is shown as accepted by the server; servers may reject it, and early data is replayable (RFC 8446 §8).</li></ul><p style="margin:6px 0 0;color:var(--muted)">All numbers on this page are examples chosen for teaching, not measurements.</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const REDUCED=matchMedia('(prefers-reduced-motion: reduce)').matches;
+(function(){var t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+const Engine=(function(){
+ let steps=[],idx=-1,timer=null,answers={},pending=null,cfg=null;
+ const api={};
+ function predictOn(){return $('predictToggle').checked}
+ function interval(){return 1700/parseFloat($('speed').value)}
+ function stop(){if(timer){clearInterval(timer);timer=null}$('btnPlay').textContent='▶ Play';$('btnPlay').setAttribute('aria-pressed','false')}
+ function start(){if(timer)return;$('btnPlay').textContent='⏸ Pause';$('btnPlay').setAttribute('aria-pressed','true');timer=setInterval(step,interval())}
+ function asked(){return Object.keys(answers).length}
+ function right(){return Object.values(answers).filter(a=>a.ok).length}
+ function hideQuiz(){$('quiz').hidden=true;$('quiz').innerHTML=''}
+ function showQuiz(n){
+  const q=steps[n].predict;let h='<h2>Predict first: what happens next?</h2><p>'+esc(q.q)+'</p><div class="opts" role="group" aria-label="Answer options">';
+  q.opts.forEach((o,i)=>{h+='<button data-i="'+i+'" aria-label="Option '+(i+1)+': '+esc(o)+'">'+esc(o)+'</button>'});
+  h+='</div><p style="margin:0;color:var(--muted)">Choose an answer to reveal the next step. Turn off “Predict first” to skip questions.</p>';
+  $('quiz').innerHTML=h;$('quiz').hidden=false;
+  $('quiz').querySelectorAll('button').forEach(b=>b.onclick=()=>answer(n,+b.dataset.i));
+  const f=$('quiz').querySelector('button');if(f)f.focus({preventScroll:false});
+ }
+ function answer(n,i){
+  const q=steps[n].predict,ok=i===q.correct;answers[n]={choice:i,ok:ok};pending=null;idx=n;
+  let h='<h2>Predict first: result</h2><p>'+esc(q.q)+'</p><div class="opts">';
+  q.opts.forEach((o,k)=>{h+='<button disabled class="'+(k===q.correct?'right':(k===i?'wrong':''))+'">'+(k===q.correct?'✔ ':(k===i?'✘ ':''))+esc(o)+'</button>'});
+  h+='</div><p class="'+(ok?'ok':'bad')+'">'+(ok?'Correct.':'Not quite.')+'</p><p>'+esc(q.why)+'</p>';
+  $('quiz').innerHTML=h;render();
+ }
+ function step(){
+  if(pending!==null)return;
+  if(idx>=steps.length-1){stop();return}
+  const n=idx+1,s=steps[n];
+  if(s.predict&&predictOn()&&answers[n]===undefined){pending=n;stop();showQuiz(n);render();return}
+  hideQuiz();idx=n;render();
+  if(idx>=steps.length-1)stop();
+ }
+ function back(){stop();if(pending!==null){pending=null;hideQuiz();render();return}if(idx>=0){idx--;hideQuiz();render()}}
+ function reset(){stop();idx=-1;answers={};pending=null;hideQuiz();render()}
+ function render(){
+  const s=idx>=0?steps[idx]:null;
+  $('stepinfo').textContent='Step '+(idx+1)+' / '+steps.length;
+  $('score').textContent='Score '+right()+'/'+asked();
+  $('btnBack').disabled=(idx<0&&pending===null);
+  cfg.render(s,idx,steps,answers);
+  const sm=$('summary');
+  if(idx>=steps.length-1&&steps.length&&pending===null){
+   let h='<h2>Summary</h2>';
+   if(asked()===0)h+='<p>No predictions were recorded. Switch on “Predict first” and Reset to test yourself.</p>';
+   else{h+='<p><b>Prediction score: '+right()+' / '+asked()+'</b></p><ol>';
+    Object.keys(answers).map(Number).sort((a,b)=>a-b).forEach(n=>{const q=steps[n].predict,a=answers[n];
+     h+='<li><span class="'+(a.ok?'ok':'bad')+'">'+(a.ok?'Correct':'Incorrect')+'</span> — '+esc(q.q)+'<br>Your answer: '+esc(q.opts[a.choice])+(a.ok?'':' · Correct: '+esc(q.opts[q.correct]))+'<br><i>'+esc(q.why)+'</i></li>'});
+    h+='</ol>'}
+   sm.innerHTML=h;sm.hidden=false;
+  }else{sm.hidden=true;sm.innerHTML=''}
+  api.idx=idx;
+ }
+ api.setSteps=function(s){steps=s;reset();window.SIM.steps=steps};
+ api.init=function(c){cfg=c;
+  $('btnStep').onclick=()=>{stop();step()};$('btnBack').onclick=back;$('btnReset').onclick=reset;
+  $('btnPlay').onclick=()=>{if(timer){stop();return}if(pending!==null)return;if(idx>=steps.length-1){reset()}start();step()};
+  $('speed').onchange=()=>{if(timer){stop();start()}};
+  $('predictToggle').onchange=()=>{if(!predictOn()&&pending!==null){const n=pending;pending=null;hideQuiz();idx=n;render()}};
+  $('btnTheme').onclick=()=>{const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('dop:theme',t)}catch(e){}};
+  document.addEventListener('keydown',e=>{
+   if(e.ctrlKey||e.metaKey||e.altKey)return;
+   const tg=e.target,tag=tg&&tg.tagName,typing=tag==='INPUT'&&tg.type!=='checkbox'||tag==='TEXTAREA'||tag==='SELECT';
+   if(typing)return;
+   if(e.key===' '){if(tag==='BUTTON')return;e.preventDefault();$('btnPlay').click()}
+   else if(e.key==='ArrowRight'){e.preventDefault();$('btnStep').click()}
+   else if(e.key==='ArrowLeft'){e.preventDefault();$('btnBack').click()}
+   else if(e.key==='r'||e.key==='R'){$('btnReset').click()}
+  });
+ };
+ api.reset=reset;api.stop=stop;api.render=render;
+ return api;
+})();
+window.SIM={steps:[],get idx(){return Engine.idx}};
+
+const MODES={
+ tls13:{name:'TCP + TLS 1.3',tcp:1,tls:1,req:1,tlsLabel:'TLS 1.3 handshake'},
+ tls12:{name:'TCP + TLS 1.2',tcp:1,tls:2,req:1,tlsLabel:'TLS 1.2 handshake'},
+ resume:{name:'TCP + TLS 1.3 resumption',tcp:1,tls:1,req:1,tlsLabel:'TLS 1.3 PSK handshake'},
+ zero:{name:'TCP + TLS 1.3 0-RTT',tcp:1,tls:0,req:1,tlsLabel:'TLS 1.3 handshake (0 extra; request rides in first flight)'},
+ h3:{name:'HTTP/3 over QUIC',tcp:0,tls:1,req:1,tlsLabel:'QUIC transport + TLS 1.3 crypto (combined)'},
+ h3zero:{name:'HTTP/3 over QUIC 0-RTT',tcp:0,tls:0,req:1,tlsLabel:'QUIC 0-RTT (request in first flight)'}
+};
+function ttfb(mode,rtt,think){const m=MODES[mode];return {tcp:m.tcp*rtt,tls:m.tls*rtt,req:m.req*rtt,think:think,total:(m.tcp+m.tls+m.req)*rtt+think}}
+function M(d,lab,say,at,kind,st,extra){return Object.assign({d:d,lab:lab,say:say,at:at,kind:kind,st:st||{}},extra||{})}
+function tcpSteps(){return [
+ M('c','SYN (seq=x)','Client asks to open a connection and proposes an initial sequence number (RFC 9293 §3.5).',0,'tcp',{tcpC:'SYN-SENT',tcpS:'LISTEN'}),
+ M('s','SYN, ACK','Server accepts, acknowledges x+1 and proposes its own sequence number. One round trip is used.',1,'tcp',{tcpS:'SYN-RECEIVED'},{predict:{q:'The client has sent SYN. What does the server send back?',opts:['SYN+ACK (acknowledges and opens its own side)','Only an ACK','A FIN','The TLS ServerHello'],correct:0,why:'A TCP three-way handshake is SYN, SYN+ACK, ACK. The server must both acknowledge the client SYN and send its own SYN.'}}),
+ M('c','ACK','Client acknowledges the server SYN. TCP is now ESTABLISHED on the client side, so it may send data immediately.',2,'tcp',{tcpC:'ESTABLISHED'})
+]}
+function build(mode){
+ let s=[];const st=(o)=>o;
+ if(mode==='tls13'){
+  s=tcpSteps().concat([
+   M('c','ClientHello + key_share','Client offers cipher suites and an ephemeral (EC)DH public value in key_share so the server can derive keys at once (RFC 8446 §4.1.2, §4.2.8).',2,'tls',{tls:'ClientHello sent',keys:'none'}),
+   M('s','ServerHello + key_share','Server picks parameters and returns its own key_share. Both sides can now derive handshake keys; everything after this is encrypted.',3,'tls',{tls:'Handshake keys derived',keys:'handshake traffic keys'},{predict:{q:'What lets the server derive encryption keys after only the first client message?',opts:['The key_share the client already put in ClientHello','A second round trip to exchange keys','The server certificate','The TCP sequence numbers'],correct:0,why:'TLS 1.3 clients guess a key exchange group and send a key_share in ClientHello, which removes the extra round trip that TLS 1.2 needed.'}}),
+   M('s','EncryptedExtensions','First encrypted server message: extensions not needed to set up keys (e.g. ALPN result).',3,'tls',{}),
+   M('s','Certificate','Server sends its certificate chain, already encrypted under handshake keys.',3,'tls',{tls:'Server certificate received (unverified)'}),
+   M('s','CertificateVerify','Signature over the handshake transcript proves the server holds the certificate private key.',3,'tls',{tls:'Server authenticated'}),
+   M('s','Finished (server)','MAC over the transcript confirms the handshake was not tampered with.',3,'tls',{}),
+   M('c','Finished + HTTP GET','Client verifies, sends its Finished, and the first HTTP request goes in the same flight under application keys. TLS cost: one round trip.',4,'http',{tls:'Established',keys:'application traffic keys',data:'request sent'},{predict:{q:'When can the client send the first HTTP request in a full TLS 1.3 handshake over TCP?',opts:['Right after its own Finished, in the same flight','Before ClientHello','After a second TLS round trip','Only after the server sends the HTTP response'],correct:0,why:'After verifying the server Finished, the client sends its Finished and can immediately send application data: one TLS round trip.'}}),
+   M('s','HTTP response (first byte)','Server replies. The client receives the first byte of the response: TTFB reached.',5,'resp',{data:'first byte received'},{predict:{q:'How many round trips elapse in total from SYN to first response byte (TCP 1 + TLS 1.3 + request)?',opts:['3','2','4','5'],correct:0,why:'TCP handshake 1 RTT, TLS 1.3 handshake 1 RTT, request/response 1 RTT = 3 RTT (plus server think time).'}})
+  ]);
+ } else if(mode==='tls12'){
+  s=tcpSteps().concat([
+   M('c','ClientHello','Client lists cipher suites and random value. No key share yet in TLS 1.2 (RFC 5246).',2,'tls',{tls:'ClientHello sent',keys:'none'}),
+   M('s','ServerHello, Certificate, KeyExchange, HelloDone','Server flight (ECDHE suite assumed): chosen parameters, certificate, signed key exchange parameters. Sent in the clear.',3,'tls',{tls:'Server flight received',keys:'none'},{predict:{q:'How many round trips does a full TLS 1.2 handshake need before application data?',opts:['2','1','0','3'],correct:0,why:'TLS 1.2 needs ClientHello/server flight, then ClientKeyExchange+Finished/server Finished: two round trips.'}}),
+   M('c','ClientKeyExchange, CCS, Finished','Client sends its key share, switches to encrypted records and sends Finished.',4,'tls',{tls:'Client finished',keys:'session keys (client)'}),
+   M('s','ChangeCipherSpec, Finished','Server confirms. Only now can application data flow safely. Second TLS round trip complete.',5,'tls',{tls:'Established',keys:'session keys'}),
+   M('c','HTTP GET','Client sends the first request, one round trip later than TLS 1.3.',6,'http',{data:'request sent'},{predict:{q:'Compared with TLS 1.3, TLS 1.2 TTFB over TCP is…',opts:['One round trip slower','Identical','Half a round trip faster','Two round trips faster'],correct:0,why:'TLS 1.2 uses 2 RTT versus 1 RTT in TLS 1.3, so the first byte arrives 1 RTT later.'}}),
+   M('s','HTTP response (first byte)','First response byte arrives: TTFB = TCP 1 + TLS 2 + request 1 = 4 RTT.',7,'resp',{data:'first byte received'})
+  ]);
+ } else if(mode==='resume'){
+  s=tcpSteps().concat([
+   M('c','ClientHello + PSK + key_share','Client offers a pre-shared key (session ticket) from an earlier connection, plus key_share (RFC 8446 §2.2).',2,'tls',{tls:'ClientHello (PSK) sent',keys:'none'}),
+   M('s','ServerHello (pre_shared_key)','Server accepts the PSK. Keys derive from the PSK (and key_share if ECDHE is used).',3,'tls',{tls:'Handshake keys derived',keys:'handshake traffic keys'},{predict:{q:'Which server message can be skipped when a PSK is accepted?',opts:['Certificate and CertificateVerify','Finished','ServerHello','EncryptedExtensions'],correct:0,why:'With PSK resumption authentication comes from the PSK, so no certificate is sent. This saves bytes and signature work, not a round trip.'}}),
+   M('s','EncryptedExtensions','Encrypted server extensions.',3,'tls',{}),
+   M('s','Finished (server)','Server Finished proves it knows the PSK-derived keys. No Certificate message.',3,'tls',{tls:'Server authenticated via PSK'}),
+   M('c','Finished + HTTP GET','Client Finished and request. Still one TLS round trip, but cheaper cryptography.',4,'http',{tls:'Established',keys:'application traffic keys',data:'request sent'}),
+   M('s','HTTP response (first byte)','TTFB = TCP 1 + TLS 1 + request 1 = 3 RTT, the same as a full handshake.',5,'resp',{data:'first byte received'},{predict:{q:'Does ordinary TLS 1.3 resumption (without 0-RTT) reduce the round trips?',opts:['No, it saves certificate work but still uses 1 RTT','Yes, to 0 RTT','Yes, to 2 RTT','It adds a round trip'],correct:0,why:'Resumption removes the certificate exchange; the handshake itself remains one round trip. Only early data (0-RTT) removes the wait.'}})
+  ]);
+ } else if(mode==='zero'){
+  s=tcpSteps().concat([
+   M('c','ClientHello + PSK + early_data','Client sends ClientHello and, in the same flight, the first HTTP request encrypted with an early traffic key (RFC 8446 §2.3).',2,'http',{tls:'ClientHello + early data sent',keys:'early traffic key',data:'request sent (0-RTT)'},{predict:{q:'What is the risk of 0-RTT early data?',opts:['It can be replayed by a network attacker','It is unencrypted','It needs two extra round trips','It cannot carry HTTP'],correct:0,why:'0-RTT data has no replay protection from the handshake itself (RFC 8446 §8). Only send idempotent requests and use server-side anti-replay.'}}),
+   M('s','ServerHello, EncryptedExt., Finished + response','Server accepts early data, completes its handshake flight and answers the request immediately.',3,'resp',{tls:'Server finished',keys:'handshake keys',data:'first byte received'}),
+   M('c','Finished (client)','Client completes the handshake. TLS added no extra wait, so TTFB = TCP 1 + TLS 0 + request 1 = 2 RTT.',4,'tls',{tls:'Established',keys:'application traffic keys'},{predict:{q:'With 0-RTT over TCP, how many round trips before the first response byte (TCP + request)?',opts:['2','1','3','0'],correct:0,why:'TCP still needs 1 RTT before data can be sent; the request/response is a second RTT. TLS contributes 0.'}})
+  ]);
+ } else if(mode==='h3'){
+  s=[
+   M('c','QUIC Initial (CRYPTO: ClientHello + key_share)','QUIC carries the TLS handshake inside its own packets (RFC 9001). There is no separate TCP handshake.',0,'tls',{tcpC:'n/a (UDP)',tcpS:'n/a (UDP)',tls:'ClientHello sent',keys:'Initial keys'},{predict:{q:'Does HTTP/3 over QUIC need a separate TCP handshake before TLS?',opts:['No, transport and crypto handshakes are combined','Yes, 1 RTT first','Yes, 2 RTT first','It uses TLS 1.2'],correct:0,why:'QUIC runs over UDP and integrates TLS 1.3, so connection setup and key exchange complete together in one round trip.'}}),
+   M('s','Initial (ServerHello) + Handshake (EncExt, Cert, CertVerify, Finished)','Server replies with its key share and encrypted handshake messages. Keys for the handshake are derived.',1,'tls',{tls:'Handshake keys derived',keys:'Handshake keys'}),
+   M('c','Handshake (Finished) + 1-RTT HTTP/3 request','Client finishes and immediately sends the HTTP/3 request in a 1-RTT packet.',2,'http',{tls:'Established',keys:'1-RTT keys',data:'request sent'},{predict:{q:'After one round trip, what can the client do in QUIC?',opts:['Send its Finished and the HTTP/3 request together','Start a TCP handshake','Start another TLS handshake','Nothing until the server sends more'],correct:0,why:'Transport and crypto are ready after one round trip, so request data follows immediately.'}}),
+   M('s','HTTP/3 response (first byte)','TTFB = QUIC+TLS 1 + request 1 = 2 RTT, one fewer than TCP + TLS 1.3.',3,'resp',{data:'first byte received'})
+  ];
+ } else {
+  s=[
+   M('c','QUIC Initial + 0-RTT packet (HTTP/3 request)','With a resumption ticket, the client sends the request in 0-RTT packets with the very first flight (RFC 9001 §4.6).',0,'http',{tcpC:'n/a (UDP)',tcpS:'n/a (UDP)',tls:'ClientHello + early data sent',keys:'0-RTT keys',data:'request sent (0-RTT)'},{predict:{q:'QUIC 0-RTT carries the request in the first flight. What is the same caveat as TLS 0-RTT?',opts:['The data can be replayed','It is unencrypted','It needs TCP','It cannot be used with HTTP/3'],correct:0,why:'0-RTT data in QUIC is replayable too; use it only for safe, idempotent requests.'}}),
+   M('s','Initial + Handshake + 1-RTT response','Server completes the handshake and answers. First byte arrives after a single round trip.',1,'resp',{tls:'Established',keys:'1-RTT keys',data:'first byte received'})
+  ];
+ }
+ let acc={tcpC:'CLOSED',tcpS:'CLOSED',tls:'idle',keys:'none',data:'none'};
+ s.forEach(x=>{acc=Object.assign({},acc,x.st);x.acc=acc});
+ return s;
+}
+let cur='tls13';
+function fmt(n){return Math.round(n*10)/10}
+function params(){return {rtt:+$('rtt').value,think:+$('think').value}}
+function elapsed(step){const p=params();return (step.at+1)*p.rtt/2+(step.kind==='resp'?p.think:0)}
+function ttfbHtml(){
+ const p=params(),m=MODES[cur],t=ttfb(cur,p.rtt,p.think);
+ let h='<div class="tw"><table><tr><th>Part</th><th>Round trips</th><th>Time</th></tr>';
+ const tcpL=m.tcp?'TCP handshake':'TCP handshake (none: QUIC uses UDP)';
+ h+='<tr><td>'+tcpL+'</td><td>'+m.tcp+'</td><td>'+m.tcp+' × '+p.rtt+' = '+t.tcp+' ms</td></tr>';
+ h+='<tr><td>'+esc(m.tlsLabel)+'</td><td>'+m.tls+'</td><td>'+m.tls+' × '+p.rtt+' = '+t.tls+' ms</td></tr>';
+ h+='<tr><td>HTTP request → first byte</td><td>'+m.req+'</td><td>'+m.req+' × '+p.rtt+' = '+t.req+' ms</td></tr>';
+ h+='<tr><td>Server think time (example)</td><td>–</td><td>'+t.think+' ms</td></tr></table></div>';
+ h+='<p><b>TTFB = '+t.tcp+' + '+t.tls+' + '+t.req+' + '+t.think+' = '+t.total+' ms</b> ('+(m.tcp+m.tls+m.req)+' RTT + think time). DNS lookup time is not included.</p>';
+ return h;
+}
+function cmpHtml(){
+ const p=params();let h='<tr><th>Scenario</th><th>RTTs</th><th>TTFB</th></tr>';
+ Object.keys(MODES).forEach(k=>{const m=MODES[k],t=ttfb(k,p.rtt,p.think);
+  h+='<tr'+(k===cur?' style="font-weight:700"':'')+'><td>'+esc(m.name)+'</td><td>'+(m.tcp+m.tls+m.req)+'</td><td>'+t.total+' ms</td></tr>'});
+ return h;
+}
+function stage(steps,idx){
+ const n=steps.length,W=420,top=44,gap=30,H=top+n*gap+16,cx=52,sx=368;
+ let h='<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Packet timeline between client and server" style="max-width:100%;height:auto;display:block">';
+ h+='<style>.l{stroke:var(--border);stroke-width:2}.a{stroke-width:2;fill:none}.t{font:11px sans-serif;fill:var(--fg)}.h{font:bold 13px sans-serif;fill:var(--fg)}</style>';
+ h+='<text class="h" x="'+cx+'" y="18" text-anchor="middle">Client</text><text class="h" x="'+sx+'" y="18" text-anchor="middle">Server</text>';
+ h+='<line class="l" x1="'+cx+'" y1="26" x2="'+cx+'" y2="'+(H-6)+'"/><line class="l" x1="'+sx+'" y1="26" x2="'+sx+'" y2="'+(H-6)+'"/>';
+ steps.forEach((s,i)=>{
+  const y=top+i*gap,c2s=s.d==='c',x1=c2s?cx:sx,x2=c2s?sx:cx;
+  const state=i<idx?'done':(i===idx?'cur':'fut');
+  const col=state==='fut'?'var(--border)':(state==='cur'?'var(--accent)':'var(--muted)');
+  const sw=state==='cur'?3:2;
+  h+='<g opacity="'+(state==='fut'?0.55:1)+'"><line x1="'+x1+'" y1="'+(y)+'" x2="'+x2+'" y2="'+(y+14)+'" stroke="'+col+'" stroke-width="'+sw+'"'+(state==='fut'?' stroke-dasharray="4 3"':'')+'/>';
+  h+='<polygon points="'+x2+','+(y+14)+' '+(x2+(c2s?-8:8))+','+(y+8)+' '+(x2+(c2s?-3:3))+','+(y+16)+'" fill="'+col+'"/>';
+  const lab=s.lab.length>44?s.lab.slice(0,43)+'…':s.lab;
+  h+='<text class="t" x="210" y="'+(y+4)+'" text-anchor="middle" '+(state==='cur'?'font-weight="700"':'')+'>'+esc(lab)+'</text>';
+  if(state==='cur'){h+='<circle r="5" fill="var(--accent)" cx="'+x1+'" cy="'+y+'">'+(REDUCED?'':'<animate attributeName="cx" from="'+x1+'" to="'+x2+'" dur="1s" fill="freeze"/><animate attributeName="cy" from="'+y+'" to="'+(y+14)+'" dur="1s" fill="freeze"/>')+'</circle>'}
+  h+='</g>';
+ });
+ return h+'</svg>';
+}
+function renderAll(s,idx,steps){
+ $('stage').innerHTML=stage(steps,idx);
+ const p=params();
+ $('say').textContent=s?(s.say+'  [packet arrives at t = '+fmt(elapsed(s))+' ms]'):'Press Step or Play to begin. Pick a scenario under “Try it”.';
+ const a=s?s.acc:{tcpC:'CLOSED',tcpS:'CLOSED',tls:'idle',keys:'none',data:'none'};
+ $('state').innerHTML='<tr><th>Client TCP</th><td>'+esc(a.tcpC)+'</td></tr><tr><th>Server TCP</th><td>'+esc(a.tcpS)+'</td></tr><tr><th>TLS</th><td>'+esc(a.tls)+'</td></tr><tr><th>Keys in use</th><td>'+esc(a.keys)+'</td></tr><tr><th>HTTP</th><td>'+esc(a.data)+'</td></tr><tr><th>Elapsed (example)</th><td>'+(s?fmt(elapsed(s)):0)+' ms</td></tr>';
+ $('ttfb').innerHTML=ttfbHtml();$('cmp').innerHTML=cmpHtml();
+ $('rttv').textContent=p.rtt+' ms';$('thinkv').textContent=p.think+' ms';
+}
+Engine.init({render:renderAll});
+function setMode(m){cur=m;Engine.setSteps(build(m))}
+$('mode').onchange=()=>setMode($('mode').value);
+['rtt','think'].forEach(id=>$(id).oninput=()=>Engine.render());
+window.SIM.ttfb=ttfb;window.SIM.MODES=MODES;window.SIM.build=build;window.SIM.getElapsed=elapsed;
+setMode('tls13');
+
+</script></body></html>

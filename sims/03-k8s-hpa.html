@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kubernetes HPA simulator</title>
+<meta name="sim:title" content="Kubernetes HPA simulator">
+<meta name="sim:topic" content="04-kubernetes">
+<meta name="sim:summary" content="Drive a HorizontalPodAutoscaler with a load curve: see ceil(current x metric / target), 10 percent tolerance, 15 second sync and the 300 second scale-down window.">
+<meta name="sim:concepts" content="hpa,horizontal pod autoscaler,desiredReplicas,tolerance,stabilization window,minReplicas,maxReplicas,sync period,cpu utilisation">
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--hi:#e8f1fc;--okbg:#dcf3e5;--badbg:#fbe1de;--warnbg:#fdf0d6;--focus:#7a3cff;--old:#9aa6b4;--new:#0b63c5}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--hi:#1b2a3c;--okbg:#14301f;--badbg:#3a1a18;--warnbg:#3a2c10;--focus:#b79bff;--old:#6b7787;--new:#5aa2f5}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1240px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}h3{font-size:.92rem;margin:12px 0 6px}
+.lede{margin:4px 0 12px;color:var(--muted)}.muted{color:var(--muted)}
+button,select,input{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover:not(:disabled){background:var(--hi)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number]{min-height:36px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);max-width:100%}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--accent)}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.bar-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.bar-ctl label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;border:1px solid var(--border);background:var(--card);font-size:.85rem}
+.say{padding:10px 14px;border-left:4px solid var(--accent);background:var(--hi);border-radius:6px;margin:8px 0;min-height:48px;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0;min-width:0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px}
+@media(min-width:960px){.grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.opts{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.opts button{text-align:left;white-space:normal}
+.opts button.right{background:var(--okbg);border-color:var(--ok)}.opts button.wrong{background:var(--badbg);border-color:var(--bad)}
+#quiz{border-color:var(--warn);background:var(--warnbg)}
+.scroll{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-align:top}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.kv div{border:1px solid var(--border);border-radius:6px;padding:4px 8px}.kv b{display:block;font-size:1.15rem}
+.bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.field{display:flex;flex-direction:column;gap:2px;margin:6px 0;min-width:0}.field>span{font-size:.85rem;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+svg{max-width:100%;height:auto;display:block}
+.simp li{margin:3px 0}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+#plot{width:100%;touch-action:none;cursor:crosshair;border:1px solid var(--border);border-radius:8px;background:var(--card)}
+.legend span{margin-right:12px;font-size:.85rem}.sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:middle;margin-right:4px}
+.ar{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;overflow-wrap:anywhere}
+.dec{padding:6px 8px;border-bottom:1px solid var(--border)}
+
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">&larr; Back to curriculum</a><h1>Kubernetes HPA simulator</h1><button id="theme" aria-label="Toggle light or dark theme">Theme</button></header>
+<main>
+<p class="lede">Each step is one 15 second HPA sync. Replicas follow desiredReplicas = ceil(currentReplicas x currentMetricValue / desiredMetricValue), subject to tolerance, limits and the scale-down window.</p>
+<div class="bar-ctl" role="group" aria-label="Playback controls">
+<button id="btnBack" aria-label="Back one step (Left arrow)">&#9664; Back</button>
+<button id="btnPlay" class="primary" aria-label="Play (Space)">&#9654; Play</button>
+<button id="btnStep" aria-label="Step forward (Right arrow)">Step &#9654;&#9654;</button>
+<button id="btnReset" aria-label="Reset (R)">&#8634; Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predict" checked aria-label="Predict first"> Predict first</label>
+
+<span class="chip" id="score" aria-live="polite">Score 0/0</span><span class="chip" id="stepinfo">Step 0 / 0</span>
+</div>
+<div id="say" class="say" role="status" aria-live="polite"></div>
+<section id="quiz" class="card" hidden aria-label="Prediction question"><h2>Predict first: what happens next?</h2><p></p><div class="opts"></div><div id="quizFb" role="status"></div></section>
+<div class="grid">
+<div>
+<section class="card" aria-label="Live state"><h2>Live state</h2><div id="state"></div></section>
+<section id="summary" class="card" hidden aria-label="Summary"></section>
+</div>
+<aside>
+<section class="card" id="tryit" aria-label="Try it"><h2>Try it (example values, edit and watch the outcome change)</h2><div class="field"><span>Load preset (also draw on the chart with mouse or touch)</span><select id="preset" aria-label="Load preset"><option value="ramp">Ramp up then down</option><option value="spike">Sudden spike</option><option value="wave">Waves</option><option value="steady">Steady</option><option value="flap">Flapping load</option></select></div>
+<div class="field"><span>Target CPU utilisation: <b id="vT">50</b>%</span><input type="range" id="T" min="20" max="90" step="5" value="50" aria-label="Target utilisation percent"></div>
+<div class="field"><span>Per-pod CPU request: <b id="vQ">200</b>m</span><input type="range" id="Q" min="100" max="500" step="50" value="200" aria-label="CPU request per pod in millicores"></div>
+<div class="row"><div class="field"><span>minReplicas: <b id="vMn">2</b></span><input type="range" id="Mn" min="1" max="10" value="2" aria-label="minReplicas"></div>
+<div class="field"><span>maxReplicas: <b id="vMx">12</b></span><input type="range" id="Mx" min="2" max="30" value="12" aria-label="maxReplicas"></div></div>
+<div class="field"><span>Tolerance: <b id="vTo">10</b>% (default 10)</span><input type="range" id="To" min="0" max="30" value="10" aria-label="Tolerance percent"></div>
+<div class="field"><span>Scale-down stabilization window: <b id="vW">300</b>s (default 300)</span><input type="range" id="W" min="0" max="600" step="15" value="300" aria-label="Scale down stabilization window seconds"></div></section>
+<section class="card simp" aria-label="Simplifications"><h2>Simplifications</h2><ul><li>Only one Resource metric (average CPU utilisation against requests) is modelled. No custom, external or container metrics, and no missing-metrics or not-yet-ready pod adjustments.</li>
+<li>New pods are assumed ready and reporting metrics instantly; the load is spread evenly over pods and CPU usage can exceed the request (as it can in a real pod without a limit).</li>
+<li>One sync every 15 seconds (default --horizontal-pod-autoscaler-sync-period). The default scale-up behaviour is applied (at most 100% of current replicas or 4 pods, whichever is larger, per 15 seconds) and scale-down has no rate limit; the scale-up stabilization window is 0.</li>
+<li>Stabilization follows the documented rule for scale-down: use the highest recommendation from the window. The recommendation history is assumed to begin at the first sync.</li>
+<li>Load values, request size, targets and replica limits are example numbers.</li></ul>
+<p class="muted">All numbers shown are examples, not measurements. Keys: Space play/pause, Left back, Right step, R reset.</p></section>
+</aside></div>
+</main>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,timer:null,init:null,initSay:''};
+const App={};
+(function(){let t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+$('#theme').onclick=()=>{const n=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('dop:theme',n)}catch(e){};if(App.theme)App.theme()};
+function tally(){let a=0,r=0;for(const k in SIM.answers){a++;const s=SIM.steps[k];if(s&&s.predict&&SIM.answers[k]===s.predict.correct)r++}return{a,r}}
+function hideQuiz(){$('#quiz').hidden=true;SIM.pending=null}
+function render(){
+ const s=SIM.idx>=0?SIM.steps[SIM.idx]:null;
+ $('#say').textContent=s?s.say:SIM.initSay;
+ App.render(s?s.view:SIM.init,s);
+ $('#stepinfo').textContent='Step '+(SIM.idx+1)+' / '+SIM.steps.length;
+ $('#btnBack').disabled=SIM.idx<0;
+ const t=tally();$('#score').textContent='Score '+t.r+'/'+t.a;
+ const sm=$('#summary');
+ if(SIM.idx>=0&&SIM.idx===SIM.steps.length-1){
+  let h='<h2>Summary</h2><p><b>Prediction score: '+t.r+' / '+t.a+'</b>'+(t.a?'':' (turn on Predict first and reset to be quizzed)')+'</p>';
+  h+=(App.summary?App.summary(s):'');
+  const ks=Object.keys(SIM.answers).map(Number).sort((a,b)=>a-b);
+  if(ks.length){h+='<ol>';for(const k of ks){const p=SIM.steps[k].predict,ok=SIM.answers[k]===p.correct;
+   h+='<li><span class="'+(ok?'ok':'bad')+'">'+(ok?'Correct':'Missed')+'</span>: '+esc(p.q)+'<br><span class="muted">You chose: '+esc(p.opts[SIM.answers[k]])+'. Answer: '+esc(p.opts[p.correct])+'. '+esc(p.why)+'</span></li>'}h+='</ol>'}
+  sm.innerHTML=h;sm.hidden=false}else sm.hidden=true;
+ if(App.afterRender)App.afterRender(s);
+}
+function showQuiz(n){
+ const p=SIM.steps[n].predict;SIM.pending=n;
+ $('#quiz p').textContent=p.q;$('#quizFb').textContent='';
+ const o=$('#quiz .opts');o.innerHTML='';
+ p.opts.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.setAttribute('aria-label','Option '+(i+1)+': '+t);b.onclick=()=>answer(i);o.appendChild(b)});
+ $('#quiz').hidden=false;
+}
+function answer(i){
+ const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict;SIM.answers[n]=i;
+ [...$('#quiz .opts').children].forEach((b,j)=>{b.disabled=true;if(j===p.correct)b.classList.add('right');else if(j===i)b.classList.add('wrong')});
+ $('#quizFb').innerHTML='<b class="'+(i===p.correct?'ok':'bad')+'">'+(i===p.correct?'Correct. ':'Not quite. ')+'</b>'+esc(p.why);
+ SIM.pending=null;SIM.idx=n;render();
+}
+function pause(){if(SIM.timer){clearInterval(SIM.timer);SIM.timer=null}$('#btnPlay').innerHTML='&#9654; Play';$('#btnPlay').setAttribute('aria-label','Play (Space)')}
+function stepFwd(){
+ if(SIM.pending!==null)return false;
+ const n=SIM.idx+1;if(n>=SIM.steps.length){pause();return false}
+ const s=SIM.steps[n];
+ hideQuiz();
+ if($('#predict').checked&&s.predict&&SIM.answers[n]===undefined){showQuiz(n);pause();return false}
+ SIM.idx=n;render();return true;
+}
+function stepBack(){pause();hideQuiz();if(SIM.idx>=0){SIM.idx--;render()}}
+function reset(){pause();hideQuiz();SIM.answers={};SIM.idx=-1;App.rebuild();render()}
+function play(){
+ if(SIM.timer){pause();return}
+ if(SIM.idx>=SIM.steps.length-1)return;
+ $('#btnPlay').innerHTML='&#10074;&#10074; Pause';$('#btnPlay').setAttribute('aria-label','Pause (Space)');
+ const tick=()=>{if(!stepFwd())pause()};
+ SIM.timer=setInterval(tick,1300/parseFloat($('#speed').value));tick();
+}
+$('#speed').onchange=()=>{if(SIM.timer){clearInterval(SIM.timer);SIM.timer=setInterval(()=>{if(!stepFwd())pause()},1300/parseFloat($('#speed').value))}};
+$('#btnStep').onclick=()=>{pause();stepFwd()};$('#btnBack').onclick=stepBack;$('#btnPlay').onclick=play;$('#btnReset').onclick=reset;
+document.addEventListener('keydown',e=>{
+ const tg=e.target.tagName,ty=e.target.type;if(tg==='SELECT'||tg==='TEXTAREA'||(tg==='INPUT'&&ty!=='checkbox')||e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key===' '){e.preventDefault();play()}
+ else if(e.key==='ArrowRight'){e.preventDefault();pause();stepFwd()}
+ else if(e.key==='ArrowLeft'){e.preventDefault();stepBack()}
+ else if(e.key==='r'||e.key==='R'){e.preventDefault();reset()}
+});
+document.addEventListener('keyup',e=>{if(e.key===' '&&(e.target.tagName==='BUTTON'||e.target.type==='checkbox'))e.preventDefault()});
+function opts4(c){const o=[c];for(let d=1;o.length<4;d++){if(c+d>=0&&o.length<4)o.push(c+d);if(c-d>=0&&o.length<4)o.push(c-d)}return o.sort((a,b)=>a-b)}
+
+const N=48,SYNC=15,YMAX=3000;
+const cfg={T:50,Q:200,Mn:2,Mx:12,To:10,W:300,preset:'ramp'};
+let L=[];
+const PRE={ramp:i=>i<16?300+i*100:(i<24?1900:Math.max(300,1900-(i-24)*100)),spike:i=>(i>=8&&i<14)?2400:400,wave:i=>Math.round(1100+900*Math.sin(i/4.5)),steady:i=>1000,flap:i=>i<10?500:(i%4<2?1600:500)};
+function loadPreset(){L=Array.from({length:N},(_,i)=>Math.max(50,Math.min(YMAX,Math.round(PRE[cfg.preset](i)/50)*50)))}
+function build(){
+ const steps=[],recs=[];let cur=cfg.Mn,asked={},nq=0,firstMetricMax=0;
+ const win=cfg.W,tol=cfg.To/100,T=cfg.T,Q=cfg.Q;
+ const hist=[{t:0,rep:cur,util:L[0]/(cur*Q)*100,L:L[0]}];
+ function view(i,o){return Object.assign({i,t:i*SYNC,hist:hist.slice(),cur:cur},o)}
+ for(let i=0;i<N;i++){
+  const t=i*SYNC,demand=L[i],util=demand/(cur*Q)*100,ratio=util/T,inTol=Math.abs(ratio-1)<=tol;
+  const raw=inTol?cur:Math.ceil(cur*ratio-1e-9);
+  const clamped=Math.max(cfg.Mn,Math.min(cfg.Mx,raw));
+  recs.push({t,r:clamped});
+  const wr=recs.filter(x=>t-x.t<=win).map(x=>x.r);
+  const up=Math.min(...wr.slice(-1)),dn=Math.max(...wr);
+  let fin=cur;if(fin<up)fin=up;if(fin>dn)fin=dn;
+  let limited=false;const upLim=Math.max(cur*2,cur+4);if(fin>cur&&fin>upLim){fin=upLim;limited=true}
+  fin=Math.max(cfg.Mn,Math.min(cfg.Mx,fin));
+  let kind,txt;
+  const a1='currentMetricValue = '+demand+'m / ('+cur+' x '+Q+'m) = '+util.toFixed(1)+'%';
+  const a2='ratio = '+util.toFixed(1)+' / '+T+' = '+ratio.toFixed(3)+(inTol?' (|ratio-1| = '+Math.abs(ratio-1).toFixed(3)+' <= tolerance '+tol.toFixed(2)+', so no scaling)':'');
+  const a3=inTol?'desiredReplicas = '+cur+' (unchanged)':'desiredReplicas = ceil('+cur+' x '+ratio.toFixed(3)+') = ceil('+(cur*ratio).toFixed(3)+') = '+raw+(clamped!==raw?', clamped to '+clamped+' (min '+cfg.Mn+', max '+cfg.Mx+')':'');
+  let a4='';
+  if(fin>cur){kind='up';a4='Scale up: stabilization window 0s for scale-up, so '+fin+(limited?' (limited by the 100%/4 pods per 15s policy)':'')+' replicas.';txt='Load is '+util.toFixed(0)+'% against a '+T+'% target, so '+cur+' x '+ratio.toFixed(2)+' rounds up to '+raw+'; scaling up to '+fin+'.'}
+  else if(fin<cur){kind='down';a4='Scale down: highest recommendation in the last '+win+'s = max('+wr.join(', ')+') = '+dn+', which is below '+cur+', so scale to '+fin+'.';txt='Utilisation stayed low for the whole stabilization window, so the highest recent recommendation ('+dn+') allows scaling down to '+fin+'.'}
+  else if(raw<cur&&dn>=cur&&!inTol){kind='held';a4='Scale down blocked: highest recommendation in the last '+win+'s = max('+wr.slice(-12).join(', ')+(wr.length>12?', ...':'')+') = '+dn+' >= current '+cur+', so stay at '+cur+'.';txt='The formula wants '+raw+' replicas, but a higher recommendation ('+dn+') is still inside the '+win+'s stabilization window, so replicas stay at '+cur+'.'}
+  else if(inTol){kind='tol';a4='Within tolerance: no change.';txt='Utilisation '+util.toFixed(0)+'% is within '+cfg.To+'% of the target, so the HPA does nothing.'}
+  else{kind='hold';a4=clamped!==raw?'Limited by '+(raw>cfg.Mx?'maxReplicas':'minReplicas')+'.':'No change.';txt=clamped!==raw?'The formula asks for '+raw+' but '+(raw>cfg.Mx?'maxReplicas':'minReplicas')+' limits it to '+clamped+'.':'No change at '+cur+' replicas.'}
+  if(fin===cur&&raw>cfg.Mx&&cur===cfg.Mx){kind='max';a4='Already at maxReplicas ('+cfg.Mx+'): cannot scale further.';txt='The formula wants '+raw+' replicas but maxReplicas is '+cfg.Mx+', so the HPA stays at '+cur+' and utilisation stays above the target.'}
+  const before=cur;cur=fin;
+  hist.push({t:t+SYNC,rep:cur,util:L[Math.min(i+1,N-1)]/(cur*Q)*100,L:L[Math.min(i+1,N-1)]});
+  const st={say:'t='+t+'s: '+txt,view:view(i,{before,after:cur,util,ratio,arith:[a1,a2,a3,a4],kind,raw})};
+  const p=(key,q,opts,c,why)=>{if(nq<5&&!asked[key]){asked[key]=1;nq++;st.predict={q,opts,correct:c,why}}};
+  if(kind==='up')p('up','At t='+t+'s utilisation is '+util.toFixed(1)+'% with '+before+' replicas and a '+T+'% target. How many replicas will the HPA ask for?',opts4(fin).map(String),opts4(fin).indexOf(fin),a3+'. '+a4);
+  else if(kind==='tol')p('tol','Utilisation is '+util.toFixed(1)+'% against a '+T+'% target with '+before+' replicas and '+cfg.To+'% tolerance. What happens?',['Replicas stay the same','Scale up by one','Scale down by one','Scale to maxReplicas'],0,a2);
+  else if(kind==='held')p('held','The formula now wants '+raw+' replicas (current '+before+'). The scale-down window is '+win+'s. What happens at this sync?',['Replicas stay at '+before,'Scale down to '+raw,'Scale down by one','Scale to minReplicas'],0,a4);
+  else if(kind==='down')p('down','Load has been low for a while. The newest recommendation is '+clamped+'. What will replicas be after this sync?',opts4(fin).map(String),opts4(fin).indexOf(fin),a4);
+  else if(kind==='max')p('max','The formula wants '+raw+' replicas but maxReplicas is '+cfg.Mx+'. What happens?',['Stay at '+cfg.Mx,'Scale to '+raw,'Scale to '+(cfg.Mx+1),'Scale down'],0,a3);
+  steps.push(st);
+ }
+ SIM.steps=steps;SIM.init=view(-1,{before:cfg.Mn,after:cfg.Mn,util:L[0]/(cfg.Mn*Q)*100,ratio:null,arith:[],kind:'init',hist:[hist[0]],cur:cfg.Mn});
+ SIM.hist=hist;SIM.initSay='Choose or draw a load curve, then Step. Each step is one 15-second HPA sync: measure, compute, stabilize, scale. Starting at '+cfg.Mn+' replicas.';
+}
+const X0=40,X1=620,Y0=10,Y1=230,YR=Math.max(cfg.Mx,30);
+function plot(v){
+ const rMax=Math.max(cfg.Mx+2,6),xs=i=>X0+(X1-X0)*i/(N-1),yl=x=>Y1-(Y1-Y0)*x/YMAX,yr=r=>Y1-(Y1-Y0)*r/rMax;
+ let s='<svg id="plot" viewBox="0 0 640 270" role="img" aria-label="Chart of load and replicas over simulated time">';
+ s+='<rect x="'+X0+'" y="'+Y0+'" width="'+(X1-X0)+'" height="'+(Y1-Y0)+'" fill="none" stroke="var(--border)"/>';
+ for(let k=0;k<=4;k++){const y=Y0+(Y1-Y0)*k/4;s+='<line x1="'+X0+'" x2="'+X1+'" y1="'+y+'" y2="'+y+'" stroke="var(--border)" stroke-dasharray="2 4"/><text x="'+(X0-4)+'" y="'+(y+4)+'" text-anchor="end" font-size="10" fill="var(--muted)">'+Math.round(YMAX*(1-k/4))+'</text>'}
+ for(let i=0;i<N;i+=8)s+='<text x="'+xs(i)+'" y="'+(Y1+14)+'" text-anchor="middle" font-size="10" fill="var(--muted)">'+(i*SYNC)+'s</text>';
+ s+='<text x="'+(X1)+'" y="'+(Y1+28)+'" text-anchor="end" font-size="10" fill="var(--muted)">simulated time (load in m CPU left axis; replicas right axis 0-'+rMax+')</text>';
+ let d='M'+xs(0)+' '+Y1;L.forEach((x,i)=>d+=' L'+xs(i)+' '+yl(x));d+=' L'+xs(N-1)+' '+Y1+' Z';
+ s+='<path d="'+d+'" fill="var(--old)" fill-opacity=".35" stroke="var(--old)"/>';
+ const h=v.hist;let p='';h.forEach((e,i)=>{const x=xs(Math.min(i,N-1));p+=(i?' H'+x+' V':'M'+x+' ')+yr(e.rep)});
+ if(h.length)s+='<path d="'+p+'" fill="none" stroke="var(--new)" stroke-width="2.5"/>';
+ s+='<text x="'+(X1+3)+'" y="'+yr(cfg.Mx)+'" font-size="9" fill="var(--bad)">max</text><line x1="'+X0+'" x2="'+X1+'" y1="'+yr(cfg.Mx)+'" y2="'+yr(cfg.Mx)+'" stroke="var(--bad)" stroke-dasharray="4 3" opacity=".6"/>';
+ if(v.i>=0)s+='<line x1="'+xs(v.i)+'" x2="'+xs(v.i)+'" y1="'+Y0+'" y2="'+Y1+'" stroke="var(--accent)" stroke-width="1.5"/>';
+ return s+'</svg>';
+}
+App.render=function(v,s){
+ let h='<div class="kv"><div>Time<b>'+Math.max(0,v.t)+'s</b></div><div>Load<b>'+L[Math.max(0,v.i)]+'m</b></div><div>Utilisation<b>'+v.util.toFixed(1)+'%</b></div><div>Target<b>'+cfg.T+'%</b></div><div>Replicas<b>'+(v.after!==undefined?v.after:cfg.Mn)+'</b></div><div>Min / max<b>'+cfg.Mn+' / '+cfg.Mx+'</b></div></div>';
+ h+=plot(v)+'<div class="legend"><span><i class="sw" style="background:var(--old)"></i>load (drag on chart to draw)</span><span><i class="sw" style="background:var(--new)"></i>replicas</span></div>';
+ h+='<h3>Decision at this sync</h3>'+(v.arith.length?'<div class="ar">'+v.arith.map(esc).join('<br>')+'</div>':'<span class="muted">No sync yet.</span>');
+ if(v.i>0){const st=SIM.steps.slice(Math.max(0,v.i-3),v.i);h+='<h3>Previous decisions</h3>'+st.map(x=>'<div class="dec"><b>t='+x.view.t+'s</b> '+esc(x.view.before)+' &rarr; '+esc(x.view.after)+' ('+x.view.kind+')</div>').join('')}
+ $('#state').innerHTML=h;
+ const pl=$('#plot');if(pl)attach(pl);
+};
+App.summary=function(s){const h=SIM.hist;const pk=Math.max(...h.map(x=>x.rep));const ch=SIM.steps.filter(x=>x.view.after!==x.view.before).length;return '<p>Peak replicas '+pk+'; replica changes: '+ch+' over '+N*SYNC+'s (example run).</p>'};
+function attach(svg){
+ let down=false;
+ const set=e=>{const r=svg.getBoundingClientRect(),px=(e.clientX-r.left)*640/r.width,py=(e.clientY-r.top)*270/r.height;
+  const i=Math.round((px-X0)/(X1-X0)*(N-1));if(i<0||i>=N)return;L[i]=Math.max(50,Math.min(YMAX,Math.round((Y1-py)/(Y1-Y0)*YMAX/50)*50));};
+ svg.onpointerdown=e=>{down=true;svg.setPointerCapture(e.pointerId);set(e)};
+ svg.onpointermove=e=>{if(down)set(e)};
+ svg.onpointerup=()=>{if(down){down=false;reset()}};
+ svg.onpointercancel=svg.onpointerup;
+}
+function readCfg(){cfg.T=+$('#T').value;cfg.Q=+$('#Q').value;cfg.Mn=+$('#Mn').value;cfg.Mx=Math.max(+$('#Mx').value,cfg.Mn);cfg.To=+$('#To').value;cfg.W=+$('#W').value;
+ $('#vT').textContent=cfg.T;$('#vQ').textContent=cfg.Q;$('#vMn').textContent=cfg.Mn;$('#vMx').textContent=cfg.Mx;$('#vTo').textContent=cfg.To;$('#vW').textContent=cfg.W}
+['T','Q','Mn','Mx','To','W'].forEach(i=>$('#'+i).addEventListener('input',()=>{readCfg();reset()}));
+$('#preset').addEventListener('change',()=>{cfg.preset=$('#preset').value;loadPreset();reset()});
+App.rebuild=build;loadPreset();readCfg();
+
+App.rebuild();render();
+</script></body></html>

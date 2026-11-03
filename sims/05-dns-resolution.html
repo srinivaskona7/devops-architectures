@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DNS resolution simulator</title>
+<meta name="sim:title" content="DNS resolution simulator">
+<meta name="sim:topic" content="00-roadmap-prerequisites">
+<meta name="sim:summary" content="Follow a DNS lookup from stub to root, TLD and authoritative servers, with caching, CNAME chains, negative caching and TTL planning.">
+<meta name="sim:concepts" content="dns,recursive resolver,root server,tld,authoritative,ttl,cache,cname,nxdomain,negative caching">
+<style>:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#5a6572;--card:#fff;--border:#cfd6de;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--net:#d6e8ff;--host:#ffe9c7;--hi:#e8f1fc;--focus:#7a3cff}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--net:#1c3a5e;--host:#4a3410;--hi:#1b2a3c;--focus:#b79bff}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1200px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}
+.lede{margin:4px 0 12px;color:var(--muted)}
+button,select,input,textarea{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover{background:var(--hi)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number],input[type=text]{min-height:40px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-width:100%}
+input[type=checkbox]{width:20px;height:20px;vertical-align:middle}
+input[type=range]{width:100%;min-height:36px}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.controls label{display:inline-flex;align-items:center;gap:6px;min-height:40px}
+.chip{display:inline-block;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:.85rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;min-width:0;overflow-wrap:anywhere}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+@media(min-width:900px){.grid{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+.say{margin:10px 0 0;padding:8px 10px;border-left:4px solid var(--accent);background:var(--hi);border-radius:4px;min-height:2.6em}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.tw{overflow-x:auto;max-width:100%}
+.quiz{border-color:var(--accent);border-width:2px}
+.quiz .opts{display:grid;gap:8px;margin:8px 0}
+.quiz .opts button{text-align:left;white-space:normal}
+.quiz .opts button.right{border-color:var(--ok);background:var(--hi)}
+.quiz .opts button.wrong{border-color:var(--bad)}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}.warnc{color:var(--warn);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:6px 0}
+.row>label{display:flex;flex-direction:column;gap:2px;min-width:0}
+.note ul{margin:4px 0 0 18px;padding:0}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.mono{overflow-wrap:anywhere}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">← Back to curriculum</a><h1>DNS resolution and caching simulator</h1><button id="btnTheme" aria-label="Toggle light or dark theme">◐ Theme</button></header>
+<main>
+<p class="lede">Step through iterative resolution for names under the reserved example.com domain and see exactly when each cache entry expires.</p>
+<section class="controls" aria-label="Playback controls">
+<button id="btnReset" aria-label="Reset simulation (R)">↺ Reset</button>
+<button id="btnBack" aria-label="Previous step (Left arrow)">◀ Back</button>
+<button id="btnPlay" class="primary" aria-label="Play or pause (Space)">▶ Play</button>
+<button id="btnStep" aria-label="Next step (Right arrow)">Step ▶</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predictToggle" checked aria-label="Predict first"> Predict first</label>
+<span id="stepinfo" class="chip" aria-live="off">Step 0 / 0</span><span id="score" class="chip">Score 0/0</span>
+</section>
+<section id="quiz" class="card quiz" aria-live="polite" hidden></section>
+<div class="grid">
+<div>
+<section class="card"><h2>Resolution path</h2>
+<div id="stage"></div>
+<p class="say" id="say" aria-live="polite">Press Step or Play to begin.</p>
+<h2 style="margin-top:12px">Message log</h2><ol id="log" style="margin:0 0 0 20px;padding:0"></ol></section>
+</div>
+<div>
+<section class="card"><h2>Try it</h2>
+<div class="row"><label>Scenario <select id="scn" aria-label="DNS scenario">
+<option value="full">Full lookup, then a repeat lookup (cache)</option>
+<option value="cname">CNAME chain</option>
+<option value="nx">Negative caching (NXDOMAIN)</option>
+<option value="change">Lower the TTL before a change</option></select></label></div>
+<div class="row" data-for="full cname"><label>Record TTL (s, example) <input type="number" id="ttl" min="0" max="604800" step="1" value="300" aria-label="Record TTL in seconds"></label></div>
+<div class="row" data-for="cname"><label>Target A record TTL (s, example) <input type="number" id="ttl2" min="0" max="604800" step="1" value="60" aria-label="Target A record TTL in seconds"></label></div>
+<div class="row" data-for="nx"><label>SOA record TTL (s, example) <input type="number" id="soaTtl" min="0" max="604800" value="3600" aria-label="SOA record TTL in seconds"></label>
+<label>SOA MINIMUM (s, example) <input type="number" id="soaMin" min="0" max="604800" value="900" aria-label="SOA MINIMUM field in seconds"></label></div>
+<div class="row" data-for="full cname nx"><label>Time before second lookup (s) <input type="number" id="elapsed" min="0" max="1000000" value="120" aria-label="Seconds elapsed before the second lookup"></label></div>
+<div class="row" data-for="change"><label>Old TTL (s, example) <input type="number" id="oldTtl" min="1" max="604800" value="86400" aria-label="Old TTL in seconds"></label>
+<label>Lowered TTL (s, example) <input type="number" id="newTtl" min="1" max="604800" value="300" aria-label="Lowered TTL in seconds"></label>
+<label>Lowered this long before change (s) <input type="number" id="lead" min="0" max="1000000" value="90000" aria-label="Seconds between lowering the TTL and making the change"></label></div>
+<p id="derived" style="margin:6px 0 0"></p>
+</section>
+<section class="card"><h2>Live state</h2>
+<p id="clock" style="margin:0 0 6px"></p>
+<div class="tw"><table id="cache" aria-label="Recursive resolver cache"></table></div></section>
+<section class="card"><h2>Notes</h2><ul style="margin:0 0 0 18px;padding:0">
+<li>The name <code>example.com</code> is reserved for documentation (RFC 2606); addresses <code>192.0.2.x</code> are the TEST-NET-1 documentation range (RFC 5737).</li>
+<li>A cached record may be used until its TTL expires (RFC 1035 §3.2.1, RFC 1034 §4.3.5). Negative answers are cached too, for the lesser of the SOA TTL and SOA MINIMUM (RFC 2308 §5).</li></ul></section>
+</div></div>
+<section id="summary" class="card" hidden aria-live="polite"></section>
+<section class="card note"><h2>Simplifications</h2><ul><li>One recursive resolver with one cache; real deployments have many resolvers and caches (OS, browser, ISP, forwarders) that each hold their own copies.</li><li>Referrals show a single name server per level; glue records, DNSSEC, EDNS, TCP fallback, query name minimisation and retries are omitted.</li><li>Delegation (NS) TTLs are fixed at an example 172800 s; resolvers may ignore or cap TTLs with their own minimum and maximum, so real stale windows can differ.</li><li>The “lower the TTL” worst case assumes the change time is known, caches obey TTLs, and no resolver serves stale data beyond expiry.</li><li>Negative TTL uses min(SOA TTL, SOA MINIMUM) per RFC 2308 §5; the NXDOMAIN response is assumed to include the SOA record. Addresses are documentation examples.</li></ul><p style="margin:6px 0 0;color:var(--muted)">All numbers on this page are examples chosen for teaching, not measurements.</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const REDUCED=matchMedia('(prefers-reduced-motion: reduce)').matches;
+(function(){var t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+const Engine=(function(){
+ let steps=[],idx=-1,timer=null,answers={},pending=null,cfg=null;
+ const api={};
+ function predictOn(){return $('predictToggle').checked}
+ function interval(){return 1700/parseFloat($('speed').value)}
+ function stop(){if(timer){clearInterval(timer);timer=null}$('btnPlay').textContent='▶ Play';$('btnPlay').setAttribute('aria-pressed','false')}
+ function start(){if(timer)return;$('btnPlay').textContent='⏸ Pause';$('btnPlay').setAttribute('aria-pressed','true');timer=setInterval(step,interval())}
+ function asked(){return Object.keys(answers).length}
+ function right(){return Object.values(answers).filter(a=>a.ok).length}
+ function hideQuiz(){$('quiz').hidden=true;$('quiz').innerHTML=''}
+ function showQuiz(n){
+  const q=steps[n].predict;let h='<h2>Predict first: what happens next?</h2><p>'+esc(q.q)+'</p><div class="opts" role="group" aria-label="Answer options">';
+  q.opts.forEach((o,i)=>{h+='<button data-i="'+i+'" aria-label="Option '+(i+1)+': '+esc(o)+'">'+esc(o)+'</button>'});
+  h+='</div><p style="margin:0;color:var(--muted)">Choose an answer to reveal the next step. Turn off “Predict first” to skip questions.</p>';
+  $('quiz').innerHTML=h;$('quiz').hidden=false;
+  $('quiz').querySelectorAll('button').forEach(b=>b.onclick=()=>answer(n,+b.dataset.i));
+  const f=$('quiz').querySelector('button');if(f)f.focus({preventScroll:false});
+ }
+ function answer(n,i){
+  const q=steps[n].predict,ok=i===q.correct;answers[n]={choice:i,ok:ok};pending=null;idx=n;
+  let h='<h2>Predict first: result</h2><p>'+esc(q.q)+'</p><div class="opts">';
+  q.opts.forEach((o,k)=>{h+='<button disabled class="'+(k===q.correct?'right':(k===i?'wrong':''))+'">'+(k===q.correct?'✔ ':(k===i?'✘ ':''))+esc(o)+'</button>'});
+  h+='</div><p class="'+(ok?'ok':'bad')+'">'+(ok?'Correct.':'Not quite.')+'</p><p>'+esc(q.why)+'</p>';
+  $('quiz').innerHTML=h;render();
+ }
+ function step(){
+  if(pending!==null)return;
+  if(idx>=steps.length-1){stop();return}
+  const n=idx+1,s=steps[n];
+  if(s.predict&&predictOn()&&answers[n]===undefined){pending=n;stop();showQuiz(n);render();return}
+  hideQuiz();idx=n;render();
+  if(idx>=steps.length-1)stop();
+ }
+ function back(){stop();if(pending!==null){pending=null;hideQuiz();render();return}if(idx>=0){idx--;hideQuiz();render()}}
+ function reset(){stop();idx=-1;answers={};pending=null;hideQuiz();render()}
+ function render(){
+  const s=idx>=0?steps[idx]:null;
+  $('stepinfo').textContent='Step '+(idx+1)+' / '+steps.length;
+  $('score').textContent='Score '+right()+'/'+asked();
+  $('btnBack').disabled=(idx<0&&pending===null);
+  cfg.render(s,idx,steps,answers);
+  const sm=$('summary');
+  if(idx>=steps.length-1&&steps.length&&pending===null){
+   let h='<h2>Summary</h2>';
+   if(asked()===0)h+='<p>No predictions were recorded. Switch on “Predict first” and Reset to test yourself.</p>';
+   else{h+='<p><b>Prediction score: '+right()+' / '+asked()+'</b></p><ol>';
+    Object.keys(answers).map(Number).sort((a,b)=>a-b).forEach(n=>{const q=steps[n].predict,a=answers[n];
+     h+='<li><span class="'+(a.ok?'ok':'bad')+'">'+(a.ok?'Correct':'Incorrect')+'</span> — '+esc(q.q)+'<br>Your answer: '+esc(q.opts[a.choice])+(a.ok?'':' · Correct: '+esc(q.opts[q.correct]))+'<br><i>'+esc(q.why)+'</i></li>'});
+    h+='</ol>'}
+   sm.innerHTML=h;sm.hidden=false;
+  }else{sm.hidden=true;sm.innerHTML=''}
+  api.idx=idx;
+ }
+ api.setSteps=function(s){steps=s;reset();window.SIM.steps=steps};
+ api.init=function(c){cfg=c;
+  $('btnStep').onclick=()=>{stop();step()};$('btnBack').onclick=back;$('btnReset').onclick=reset;
+  $('btnPlay').onclick=()=>{if(timer){stop();return}if(pending!==null)return;if(idx>=steps.length-1){reset()}start();step()};
+  $('speed').onchange=()=>{if(timer){stop();start()}};
+  $('predictToggle').onchange=()=>{if(!predictOn()&&pending!==null){const n=pending;pending=null;hideQuiz();idx=n;render()}};
+  $('btnTheme').onclick=()=>{const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('dop:theme',t)}catch(e){}};
+  document.addEventListener('keydown',e=>{
+   if(e.ctrlKey||e.metaKey||e.altKey)return;
+   const tg=e.target,tag=tg&&tg.tagName,typing=tag==='INPUT'&&tg.type!=='checkbox'||tag==='TEXTAREA'||tag==='SELECT';
+   if(typing)return;
+   if(e.key===' '){if(tag==='BUTTON')return;e.preventDefault();$('btnPlay').click()}
+   else if(e.key==='ArrowRight'){e.preventDefault();$('btnStep').click()}
+   else if(e.key==='ArrowLeft'){e.preventDefault();$('btnBack').click()}
+   else if(e.key==='r'||e.key==='R'){$('btnReset').click()}
+  });
+ };
+ api.reset=reset;api.stop=stop;api.render=render;
+ return api;
+})();
+window.SIM={steps:[],get idx(){return Engine.idx}};
+
+const NSTTL=172800; // example delegation TTL
+const NODES={stub:'Stub resolver',rec:'Recursive resolver',root:'Root server',tld:'TLD server (.com/.net)',auth:'Authoritative server'};
+const XS={stub:46,rec:138,root:230,tld:322,auth:414};
+function dur(s){s=Math.round(s);if(s<60)return s+' s';const u=[['d',86400],['h',3600],['min',60]];let r=[],x=s;u.forEach(a=>{if(x>=a[1]){r.push(Math.floor(x/a[1])+' '+a[0]);x%=a[1]}});if(x)r.push(x+' s');return s+' s ('+r.join(' ')+')'}
+function S(from,to,lab,say,t,o){return Object.assign({from:from,to:to,lab:lab,say:say,t:t,add:[]},o||{})}
+function walk(qname,tld,zone,t,fin){
+ return [
+  S('rec','root','A? '+qname,'Cache has no usable data, so the recursive resolver starts at a root server (RFC 1034 §5.3.3).',t),
+  S('root','rec','Referral: '+tld+'. NS','The root does not hold '+qname+', but it knows who runs .'+tld+', so it refers the resolver there.',t,{add:[{k:tld+'. NS',v:'a.gtld-servers.net (example)',exp:t+NSTTL}]}),
+  S('rec','tld','A? '+qname,'The resolver repeats the same question to a .'+tld+' name server.',t),
+  S('tld','rec','Referral: '+zone+'. NS','The TLD servers know which servers are authoritative for '+zone+' and refer the resolver on.',t,{add:[{k:zone+'. NS',v:'authoritative servers (example)',exp:t+NSTTL}]}),
+  S('rec','auth','A? '+qname,'The resolver asks the authoritative server, the only source that can give a definitive answer.',t)
+ ].concat(fin);
+}
+function pq(q,opts,c,why){return {q:q,opts:opts,correct:c,why:why}}
+function p2(kind,expectedIdx){return null}
+function build(scn,P){
+ let s=[];
+ const QA=(n,ip,ttl,t)=>[S('stub','rec','A? '+n,'The stub resolver on the client asks its configured recursive resolver, with recursion desired (RFC 1034 §5.3.1).',t)];
+ if(scn==='full'){
+  const ttl=P.ttl,e=P.elapsed,name='www.example.com';
+  s=QA(name,0,0,0).concat(walk(name,'com','example.com',0,[
+   S('auth','rec','A 192.0.2.10 TTL '+ttl,'The authoritative server answers with the address and a TTL: how long caches may reuse it.',0,{add:[{k:name+' A',v:'192.0.2.10',exp:ttl}]}),
+  ]),[S('rec','stub','A 192.0.2.10','The resolver caches the answer and returns it to the stub. The first lookup needed four extra messages beyond the stub exchange.',0)]);
+  s[1].predict=pq('The resolver cache is empty. Where does it send the query first?',['A root server','The authoritative server for example.com','The .com TLD server','The stub resolver'],0,'With nothing cached it starts at the top of the tree: a root server (resolvers are configured with root hints).');
+  s[2].predict=pq('The root server does not know www.example.com. What does it return?',['A referral to the .com TLD servers','The final IP address','NXDOMAIN','An error asking the client to retry'],0,'Root servers only delegate: they refer resolvers to the TLD servers for com.');
+  s[6].predict=pq('What does the TTL in the answer control?',['How long caches may reuse the answer before asking again','How many hops the query may take','How long the authoritative server stays up','The speed of the next lookup'],0,'The TTL is the number of seconds a cached copy may be used; after that the resolver must ask again.');
+  // second lookup
+  const t=e,hit=e<ttl,rem=ttl-e;
+  const kind=hit?'hit':(e<NSTTL?'auth':'walk');
+  let two=QA(name,0,0,t);
+  if(hit)two.push(S('rec','stub','A 192.0.2.10 (cache hit, TTL left '+rem+')','Cache hit: the entry is still valid ('+e+' s elapsed < TTL '+ttl+' s), so no upstream query is needed. The returned TTL has counted down to '+rem+' s.',t));
+  else if(kind==='auth')two=two.concat([S('rec','auth','A? '+name,'The cached answer expired ('+e+' s ≥ TTL '+ttl+' s), but the NS delegation for example.com is still cached, so the resolver asks the authoritative server directly.',t),S('auth','rec','A 192.0.2.10 TTL '+ttl,'Fresh answer, cached again with a new TTL.',t,{add:[{k:name+' A',v:'192.0.2.10',exp:t+ttl}]}),S('rec','stub','A 192.0.2.10','Answer returned after one upstream round trip.',t)]);
+  else two=two.concat(walk(name,'com','example.com',t,[S('auth','rec','A 192.0.2.10 TTL '+ttl,'Both the answer and the delegations expired, so a full walk was needed.',t,{add:[{k:name+' A',v:'192.0.2.10',exp:t+ttl}]}),S('rec','stub','A 192.0.2.10','Answer returned.',t)]));
+  const opts=['Answered from the resolver cache, no upstream query','Only the authoritative server is asked again','A full walk from the root is repeated'];
+  two[1].predict=pq('Second lookup of the same name after '+e+' s (record TTL '+ttl+' s). What happens?',opts,{hit:0,auth:1,walk:2}[kind],hit?'The elapsed time is below the TTL, so the cached record is still valid.':(kind==='auth'?'The A record expired, but the NS delegation (TTL '+NSTTL+' s in this example) is still cached, so only the authoritative server is asked.':'Even the delegation expired, so the resolver starts again at the root.'));
+  s=s.concat(two);
+  P.derived='Cache entry expires at t = '+dur(ttl)+'. Second lookup at t = '+dur(e)+': '+(hit?'<b class="ok">cache hit</b>, '+dur(rem)+' remaining.':'<b class="warnc">expired</b> '+dur(e-ttl)+' ago, resolver must ask upstream.');
+  P.kind=kind;
+ } else if(scn==='cname'){
+  const tc=P.ttl,ta=P.ttl2,e=P.elapsed,name='app.example.com',tgt='edge.example.net';
+  s=QA(name,0,0,0).concat(walk(name,'com','example.com',0,[
+   S('auth','rec','CNAME '+tgt+' TTL '+tc,name+' is an alias. The authoritative server returns a CNAME, meaning “the canonical name is '+tgt+'; ask for that instead” (RFC 1034 §3.6.2).',0,{add:[{k:name+' CNAME',v:tgt,exp:tc}]})
+  ])).concat(walk(tgt,'net','example.net',0,[
+   S('auth','rec','A 192.0.2.20 TTL '+ta,'The authoritative server for example.net finally gives the address, with its own TTL.',0,{add:[{k:tgt+' A',v:'192.0.2.20',exp:ta}]})
+  ]),[S('rec','stub','CNAME → A 192.0.2.20','The resolver returns the whole chain (CNAME and A) to the stub.',0)]);
+  s[6].predict=pq('The resolver asks the example.com authoritative server for app.example.com, which is an alias. What does it answer?',['A CNAME pointing to the canonical name','The final IP address directly','A referral to the root','NXDOMAIN'],0,'The alias is a CNAME record in the example.com zone; the authoritative server returns it and the resolver must follow it.');
+  s[7].predict=pq('The answer is a CNAME to edge.example.net, not an address. What must the resolver do next?',['Resolve the target name itself, restarting the lookup for edge.example.net','Return the CNAME to the stub and stop','Retry the same query','Fail with SERVFAIL'],0,'A recursive resolver follows the chain itself, so the client gets the final address with one query.');
+  const hit=e<Math.min(tc,ta);const part=!hit&&e<tc;
+  const kind=hit?'hit':(part?'part':'full');
+  let two=QA(name,0,0,e);
+  if(hit)two.push(S('rec','stub','CNAME → A (cache hit)','Both the CNAME ('+dur(tc-e)+' left) and the A record ('+dur(ta-e)+' left) are cached, so no upstream queries.',e));
+  else if(part)two=two.concat([S('rec','auth','A? '+tgt,'The CNAME is still cached ('+dur(tc-e)+' left) but the target A expired ('+e+' s ≥ '+ta+' s). Only the target is re-resolved, going straight to its authoritative server (delegation assumed cached).',e),S('auth','rec','A 192.0.2.20 TTL '+ta,'Fresh A record cached.',e,{add:[{k:tgt+' A',v:'192.0.2.20',exp:e+ta}]}),S('rec','stub','CNAME → A 192.0.2.20','Chain returned.',e)]);
+  else two=two.concat([S('rec','auth','A? '+name,'Both records expired, so the resolver asks the authoritative server for example.com (delegations assumed cached).',e),S('auth','rec','CNAME '+tgt,'CNAME again.',e,{add:[{k:name+' CNAME',v:tgt,exp:e+tc}]}),S('rec','auth','A? '+tgt,'Then the target name is re-resolved.',e),S('auth','rec','A 192.0.2.20 TTL '+ta,'Fresh A record.',e,{add:[{k:tgt+' A',v:'192.0.2.20',exp:e+ta}]}),S('rec','stub','CNAME → A 192.0.2.20','Chain returned.',e)]);
+  two[1].predict=pq('Second lookup after '+e+' s (CNAME TTL '+tc+' s, target A TTL '+ta+' s). What does the resolver do?',['Answers entirely from cache','Re-resolves only the target A record','Re-resolves both the CNAME and the target'],{hit:0,part:1,full:2}[kind],'Each record in the chain is cached with its own TTL. '+(kind==='hit'?'Both are still valid.':(kind==='part'?'The CNAME is still valid but the A record expired.':'Both have expired.')));
+  s=s.concat(two);
+  P.derived='CNAME expires at '+dur(tc)+'; target A expires at '+dur(ta)+'. The chain is fully cached only until the earlier of the two: '+dur(Math.min(tc,ta))+'.';
+  P.kind=kind;
+ } else if(scn==='nx'){
+  const neg=Math.min(P.soaTtl,P.soaMin),e=P.elapsed,name='nope.example.com';
+  s=QA(name,0,0,0).concat(walk(name,'com','example.com',0,[
+   S('auth','rec','NXDOMAIN + SOA','The zone exists but the name does not: response code NXDOMAIN with the zone SOA record attached so resolvers can cache the negative answer (RFC 2308 §2.1).',0,{add:[{k:name+' (negative)',v:'NXDOMAIN',exp:neg}]})
+  ]),[S('rec','stub','NXDOMAIN','The resolver caches “this name does not exist” for min(SOA TTL, SOA MINIMUM) = '+dur(neg)+' and returns NXDOMAIN (RFC 2308 §5).',0)]);
+  s[6].predict=pq('The authoritative server answers that the name does not exist (NXDOMAIN). Can that answer be cached?',['Yes, negative answers are cached too','No, only positive answers are cached','Only by the stub, not the resolver','Only for 1 second'],0,'RFC 2308 defines negative caching: NXDOMAIN and NODATA answers are cached using the SOA record.');
+  s[7].predict=pq('SOA TTL is '+P.soaTtl+' s and SOA MINIMUM is '+P.soaMin+' s. For how long is NXDOMAIN cached?',['min = '+neg+' s','max = '+Math.max(P.soaTtl,P.soaMin)+' s','Sum of both','Forever'],0,'RFC 2308 §5: the negative TTL is the minimum of the SOA record TTL and the SOA MINIMUM field.');
+  const hit=e<neg;let two=QA(name,0,0,e);
+  if(hit)two.push(S('rec','stub','NXDOMAIN (cached)','Negative cache hit ('+e+' s < '+neg+' s): the resolver answers NXDOMAIN without asking upstream, even if the record has just been created.',e));
+  else two=two.concat([S('rec','auth','A? '+name,'The negative entry expired ('+e+' s ≥ '+neg+' s), so the resolver asks the authoritative server again (delegation assumed cached).',e),S('auth','rec','NXDOMAIN + SOA','Still does not exist.',e,{add:[{k:name+' (negative)',v:'NXDOMAIN',exp:e+neg}]}),S('rec','stub','NXDOMAIN','Returned and cached again.',e)]);
+  two[1].predict=pq('Someone creates nope.example.com at the authoritative server right after the first lookup. A repeat lookup after '+e+' s:',['Still returns NXDOMAIN from the negative cache','Returns the new address immediately','Returns SERVFAIL','Asks the root'],hit?0:1,hit?'The negative entry has not expired, so the resolver keeps answering NXDOMAIN.':'The negative entry expired, so the resolver asks again and sees the new record.');
+  if(!hit)two[1].predict.opts[1]='Re-queries the authoritative server and gets the new address';
+  s=s.concat(two);
+  P.derived='Negative TTL = min('+P.soaTtl+', '+P.soaMin+') = '+dur(neg)+'. Second lookup at '+dur(e)+': '+(hit?'<b class="warnc">negative cache hit</b>.':'<b class="ok">expired, re-queried</b>.');
+  P.kind=hit?'hit':'req';
+ } else {
+  const old=P.oldTtl,nw=Math.min(P.newTtl,old),lead=P.lead;
+  const stale=Math.max(old-lead,nw);const without=old;
+  const lowered=nw<old;
+  s=[
+   S('auth','rec','Lower TTL '+old+' → '+nw,'Operator lowers the TTL on the existing record but keeps the same address. Caches that already hold the old copy keep it for up to '+dur(old)+' more.',-lead,{note:'t = −'+dur(lead)+' (relative to the change)',set:{ttl:nw+' s (from now on)',data:'192.0.2.10'}}),
+   S('rec','rec','Old entries age out','Wait: any cache that fetched the record before the TTL was lowered holds it until at most '+dur(old)+' after the lowering. '+(lead>=old?'Waiting '+dur(lead)+' is at least the old TTL, so every cache now uses the short TTL.':'Waiting only '+dur(lead)+' is shorter than the old TTL, so some caches still hold a long-lived copy.'),Math.min(0,-lead+old),{note:'t = '+dur(Math.max(-lead+old,-lead))+' after lowering',set:{ttl:nw+' s',data:'192.0.2.10'}}),
+   S('auth','auth','Change record to 192.0.2.99','Change time (t = 0): the authoritative server now serves the new address. Resolvers that cached the old one do not know yet.',0,{note:'t = 0 (the change)',set:{ttl:nw+' s',data:'192.0.2.99 (new)'}}),
+   S('rec','stub','Stale 192.0.2.10 still served','Worst case: a resolver cached the old address just before the change and keeps serving it until its entry expires, up to '+dur(stale)+' after the change.',stale/2,{note:'0 < t < '+dur(stale),set:{ttl:nw+' s',data:'192.0.2.99 (new); caches may still return 192.0.2.10'}}),
+   S('rec','stub','Fresh 192.0.2.99 everywhere','Every cache has expired the old entry (worst case at t = '+dur(stale)+') and re-fetches the new address. Afterwards the operator can raise the TTL again.',stale,{note:'t = '+dur(stale),set:{ttl:nw+' s',data:'192.0.2.99 everywhere'}})
+  ];
+  s[0].predict=pq('Why lower the TTL well before making a DNS change?',['So caches that hold the old long-TTL entry expire before the change','It makes the authoritative server faster','It removes the need to change the record','It clears caches immediately'],0,'You cannot recall copies already cached. Lowering TTL in advance, by at least the old TTL, bounds how long stale answers can persist after the change.');
+  s[3].predict=pq('With old TTL '+old+' s, new TTL '+nw+' s, lowered '+lead+' s before the change, what is the longest stale window after the change?',[dur(stale),dur(without)+' (the old TTL)',dur(nw)+' always','0 s'],0,'Worst case is max(old TTL − lead time, new TTL) = max('+old+' − '+lead+', '+nw+') = '+stale+' s. Without any advance lowering it is the full old TTL ('+without+' s).');
+  s[3].predict.opts=[dur(stale),dur(without)+' (the old TTL)',dur(nw)+' (the new TTL)','0 s (instant)'];
+  if(stale===without||stale===nw){/* keep options distinct */s[3].predict.opts[1]=dur(without+60)+' (old TTL + 60 s)';if(stale===nw)s[3].predict.opts[2]=dur(nw+30)+' (new TTL + 30 s)'}
+  P.derived='Worst-case stale window = max(old − lead, new) = max('+old+' − '+lead+', '+nw+') = <b>'+dur(stale)+'</b>. Without lowering in advance it would be '+dur(without)+'.'+(lowered?'':' (Lowered TTL is not smaller than the old TTL.)');
+  P.stale=stale;
+ }
+ return s;
+}
+const ids=['ttl','ttl2','soaTtl','soaMin','elapsed','oldTtl','newTtl','lead'];
+function num(id){let v=parseInt($(id).value,10);if(!isFinite(v)||v<0)v=0;return v}
+function params(){const p={};ids.forEach(i=>p[i]=num(i));return p}
+let P={},curScn='full';
+function visible(){document.querySelectorAll('[data-for]').forEach(r=>{r.hidden=r.dataset.for.split(' ').indexOf(curScn)<0})}
+function rebuild(){visible();P=params();const s=build(curScn,P);Engine.setSteps(s);window.SIM.P=P}
+function entriesUpTo(steps,idx){const m={};for(let i=0;i<=idx;i++){steps[i].add.forEach(a=>{m[a.k]=a})}return Object.values(m)}
+function svg(s){
+ let h='<svg viewBox="0 0 460 170" width="100%" role="img" aria-label="DNS servers and current message" style="max-width:100%;height:auto;display:block"><defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/></marker></defs>';
+ Object.keys(NODES).forEach(k=>{const x=XS[k],on=s&&(s.from===k||s.to===k);
+  h+='<g><rect x="'+(x-40)+'" y="10" width="80" height="44" rx="8" fill="'+(on?'var(--hi)':'var(--card)')+'" stroke="'+(on?'var(--accent)':'var(--border)')+'" stroke-width="'+(on?3:1.5)+'"/>';
+  const w=NODES[k].split(' (')[0].split(' ');h+='<text x="'+x+'" y="29" text-anchor="middle" style="font:11px sans-serif;fill:var(--fg)">'+esc(w[0])+'</text><text x="'+x+'" y="43" text-anchor="middle" style="font:11px sans-serif;fill:var(--fg)">'+esc(w.slice(1).join(' '))+'</text></g>'});
+ if(s&&s.from!==s.to){const x1=XS[s.from],x2=XS[s.to],d=Math.abs(x2-x1),q=s.to==='stub'||s.from==='stub'||x2<x1,dy=60+Math.min(80,d*0.3);
+  const off=x2<x1?-8:8;
+  h+='<path d="M'+x1+',56 Q'+((x1+x2)/2)+','+dy+' '+x2+',56" fill="none" stroke="var(--accent)" stroke-width="3" marker-end="url(#ar)"'+(x2<x1?' stroke-dasharray="6 3"':'')+'/>';
+  h+='<text x="'+((x1+x2)/2)+'" y="'+(dy+22)+'" text-anchor="middle" style="font:bold 11px sans-serif;fill:var(--fg)">'+esc(s.lab.length>40?s.lab.slice(0,39)+'…':s.lab)+'</text>';
+  h+='<text x="230" y="165" text-anchor="middle" style="font:10px sans-serif;fill:var(--muted)">solid = query, dashed = response</text>';
+ } else if(s){h+='<text x="230" y="110" text-anchor="middle" style="font:bold 12px sans-serif;fill:var(--fg)">'+esc(s.lab)+'</text>'}
+ return h+'</svg>';
+}
+function renderAll(s,idx,steps){
+ $('stage').innerHTML=svg(s);
+ $('say').textContent=s?s.say:'Press Step or Play to begin.';
+ let lg='';for(let i=0;i<=idx;i++){const x=steps[i];lg+='<li'+(i===idx?' style="font-weight:700"':'')+'>'+esc(NODES[x.from].split(' (')[0])+(x.from===x.to?'':' → '+esc(NODES[x.to].split(' (')[0]))+': '+esc(x.lab)+'</li>'}
+ $('log').innerHTML=lg||'<li style="list-style:none;margin-left:-20px;color:var(--muted)">No messages yet.</li>';
+ const t=s?s.t:0;
+ if(curScn==='change'){
+  const set=s&&s.set||{ttl:P.oldTtl+' s',data:'192.0.2.10'};
+  $('clock').innerHTML='Timeline: <b>'+esc(s&&s.note?s.note:'before any action')+'</b>';
+  $('cache').innerHTML='<tr><th>Authoritative TTL</th><td>'+esc(set.ttl)+'</td></tr><tr><th>Authoritative data</th><td>'+esc(set.data)+'</td></tr><tr><th>Worst-case stale window</th><td>'+dur(P.stale)+'</td></tr><tr><th>Without lowering</th><td>'+dur(P.oldTtl)+'</td></tr>';
+ } else {
+  $('clock').innerHTML='Resolver clock: <b>t = '+dur(t)+'</b>';
+  const es=entriesUpTo(steps,idx);
+  let h='<tr><th>Cached record</th><th>Value</th><th>TTL left</th></tr>';
+  if(!es.length)h+='<tr><td colspan="3" style="color:var(--muted)">Cache empty</td></tr>';
+  es.forEach(a=>{const left=a.exp-t;h+='<tr><td>'+esc(a.k)+'</td><td>'+esc(a.v)+'</td><td>'+(left>0?'<span class="ok">'+dur(left)+'</span>':'<span class="bad">expired</span>')+'</td></tr>'});
+  $('cache').innerHTML=h;
+ }
+ $('derived').innerHTML=P.derived||'';
+}
+Engine.init({render:renderAll});
+$('scn').onchange=()=>{curScn=$('scn').value;rebuild()};
+ids.forEach(i=>$(i).oninput=rebuild);
+window.SIM.dur=dur;window.SIM.NSTTL=NSTTL;
+rebuild();
+
+</script></body></html>

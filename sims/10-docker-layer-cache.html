@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Docker layer cache simulator</title>
+<meta name="sim:title" content="Docker layer cache simulator">
+<meta name="sim:topic" content="03-docker">
+<meta name="sim:summary" content="See which Dockerfile steps are cache hits or rebuilds after a change, compare naive and dependency-first order, multi-stage image size, and BuildKit cache mounts.">
+<meta name="sim:concepts" content="Docker,layer cache,build cache,Dockerfile,cache invalidation,COPY,RUN,multi-stage build,BuildKit,cache mount,registry cache,layer ordering">
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#56616e;--card:#fff;--border:#c9d1da;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--hi:#e8f1fc;--okbg:#dcf3e5;--badbg:#fbe1de;--warnbg:#fdf0d6;--focus:#7a3cff;--old:#9aa6b4;--new:#0b63c5}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--hi:#1b2a3c;--okbg:#14301f;--badbg:#3a1a18;--warnbg:#3a2c10;--focus:#b79bff;--old:#6b7787;--new:#5aa2f5}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1240px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}h3{font-size:.92rem;margin:12px 0 6px}
+.lede{margin:4px 0 12px;color:var(--muted)}.muted{color:var(--muted)}
+button,select,input{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 14px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover:not(:disabled){background:var(--hi)}button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number]{min-height:36px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);max-width:100%}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--accent)}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.bar-ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.bar-ctl label{display:inline-flex;align-items:center;gap:6px;min-height:36px}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;border:1px solid var(--border);background:var(--card);font-size:.85rem}
+.say{padding:10px 14px;border-left:4px solid var(--accent);background:var(--hi);border-radius:6px;margin:8px 0;min-height:48px;overflow-wrap:anywhere}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0;min-width:0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:0 14px}
+@media(min-width:960px){.grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.opts{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.opts button{text-align:left;white-space:normal}
+.opts button.right{background:var(--okbg);border-color:var(--ok)}.opts button.wrong{background:var(--badbg);border-color:var(--bad)}
+#quiz{border-color:var(--warn);background:var(--warnbg)}
+.scroll{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-align:top}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.kv div{border:1px solid var(--border);border-radius:6px;padding:4px 8px}.kv b{display:block;font-size:1.15rem}
+.bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.field{display:flex;flex-direction:column;gap:2px;margin:6px 0;min-width:0}.field>span{font-size:.85rem;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+svg{max-width:100%;height:auto;display:block}
+.simp li{margin:3px 0}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.node{border:1px solid var(--border);border-radius:8px;padding:8px;min-width:0;overflow-wrap:anywhere;background:var(--card)}
+.node.leader{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}.node.cand{border-color:var(--warn);background:var(--warnbg)}
+.node.down{opacity:.6;border-style:dashed}.node small{display:block;color:var(--muted)}
+.role{font-weight:700}
+.log{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;min-height:26px}
+.ent{display:inline-block;padding:1px 6px;border:1px dashed var(--muted);border-radius:4px;font-size:.78rem;font-family:ui-monospace,Menlo,Consolas,monospace}
+.ent.c{border-style:solid;border-color:var(--ok);background:var(--okbg)}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.78rem;font-weight:700;border:1px solid var(--border)}
+.badge.hit{background:var(--okbg);color:var(--ok);border-color:var(--ok)}.badge.miss{background:var(--badbg);color:var(--bad);border-color:var(--bad)}
+.hl{background:var(--warnbg)}
+.mini{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.ev{max-height:190px;overflow:auto}
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">&larr; Back to curriculum</a><h1>Docker layer cache simulator</h1><button id="theme" aria-label="Toggle light or dark theme">Theme</button></header>
+<main>
+<p class="lede">Pick what changed, then step through the build to see which layers are reused and which rebuild. Durations and sizes are editable examples.</p>
+<div class="bar-ctl" role="group" aria-label="Playback controls">
+<button id="btnBack" aria-label="Back one step (Left arrow)">&#9664; Back</button>
+<button id="btnPlay" class="primary" aria-label="Play (Space)">&#9654; Play</button>
+<button id="btnStep" aria-label="Step forward (Right arrow)">Step &#9654;&#9654;</button>
+<button id="btnReset" aria-label="Reset (R)">&#8634; Reset</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predict" checked aria-label="Predict first"> Predict first</label>
+<span class="chip" id="score" aria-live="polite">Score 0/0</span><span class="chip" id="stepinfo">Step 0 / 0</span>
+</div>
+<div id="say" class="say" role="status" aria-live="polite"></div>
+<section id="quiz" class="card" hidden aria-label="Prediction question"><h2>Predict first: what happens next?</h2><p></p><div class="opts"></div><div id="quizFb" role="status"></div></section>
+<div class="grid">
+<div>
+<section class="card" aria-label="Live state"><h2>Live state</h2><div id="state"></div></section>
+<section id="summary" class="card" hidden aria-label="Summary"></section>
+</div>
+<aside>
+<section class="card" id="tryit" aria-label="Try it"><h2>Try it (example values, edit and the run is recomputed)</h2>
+<div class="field"><span>What changed since the last build?</span><select id="chg" aria-label="What changed"><option value="src" selected>A source file</option><option value="dep">The dependency file (package.json)</option><option value="line">A Dockerfile line</option><option value="none">Nothing</option></select></div>
+<div class="field"><span>Which Dockerfile line (when "A Dockerfile line")</span><select id="linesel" aria-label="Which Dockerfile line" disabled><option value="from">FROM node:20</option><option value="manifest">COPY package*.json ./</option><option value="deps" selected>RUN npm ci</option><option value="src">COPY . .</option><option value="build">RUN npm run build</option><option value="cmd">CMD</option></select></div>
+<div class="field"><span>Order shown step by step</span><select id="ord" aria-label="Instruction order"><option value="dep" selected>Dependency-first (recommended)</option><option value="naive">Naive (COPY . . first)</option></select></div>
+<h3>Build durations (example seconds)</h3><div class="row"><label class="field"><span>FROM (pull base image) (s)</span><input type="number" data-d="from" value="2" min="0" step="0.1" aria-label="Duration of FROM (pull base image) in seconds"></label><label class="field"><span>COPY package*.json (s)</span><input type="number" data-d="manifest" value="0.2" min="0" step="0.1" aria-label="Duration of COPY package*.json in seconds"></label><label class="field"><span>RUN npm ci (s)</span><input type="number" data-d="deps" value="45" min="0" step="0.1" aria-label="Duration of RUN npm ci in seconds"></label><label class="field"><span>COPY . . (source) (s)</span><input type="number" data-d="src" value="0.5" min="0" step="0.1" aria-label="Duration of COPY . . (source) in seconds"></label><label class="field"><span>RUN npm run build (s)</span><input type="number" data-d="build" value="30" min="0" step="0.1" aria-label="Duration of RUN npm run build in seconds"></label><label class="field"><span>CMD (metadata) (s)</span><input type="number" data-d="cmd" value="0" min="0" step="0.1" aria-label="Duration of CMD (metadata) in seconds"></label></div><div class="row"><button id="durReset" aria-label="Restore default durations">Restore defaults</button></div>
+<h3>Image sizes for the multi-stage view (example MB)</h3><div class="row"><label class="field"><span>Base image full (MB)</span><input type="number" data-s="base" value="1100" min="0" aria-label="Base image full (MB)"></label><label class="field"><span>All node_modules (MB)</span><input type="number" data-s="full" value="250" min="0" aria-label="All node_modules (MB)"></label><label class="field"><span>Production node_modules (MB)</span><input type="number" data-s="prod" value="120" min="0" aria-label="Production node_modules (MB)"></label><label class="field"><span>Source (MB)</span><input type="number" data-s="src" value="5" min="0" aria-label="Source (MB)"></label><label class="field"><span>Build output (MB)</span><input type="number" data-s="out" value="15" min="0" aria-label="Build output (MB)"></label><label class="field"><span>Slim runtime base (MB)</span><input type="number" data-s="slim" value="180" min="0" aria-label="Slim runtime base (MB)"></label></div></section>
+<section class="card" aria-label="Cache rules"><h2>The documented rules</h2><ul>
+<li>Each instruction is checked against cached layers built from the same parent. If none matches, that layer is rebuilt.</li>
+<li>Once a layer changes, all downstream layers have to be rebuilt as well.</li>
+<li>For <code>RUN</code>, the cache key is the command string; the command is not re-run to see if its output would differ.</li>
+<li>For <code>COPY</code> and <code>ADD</code>, the cache key includes a checksum of the copied files' contents (modification times are ignored).</li>
+<li>Order from least to most frequently changing: base, tooling, dependency manifest, install, source, build.</li></ul></section>
+<section class="card simp" aria-label="Simplifications"><h2>Simplifications</h2><ul>
+<li>One Node.js example Dockerfile. Durations and sizes are illustrative example numbers, not measurements; real times depend on network, hardware and package set.</li>
+<li>Time on a cache hit is shown as 0.0 s (real hits cost a little). Only the changes offered here are modelled: no ARG/ENV changes, build secrets, <code>.dockerignore</code> effects, ADD from URL, or <code>--no-cache</code> / <code>--pull</code>.</li>
+<li>A <code>FROM</code> tag such as node:20 can move upstream; the simulator assumes the same image is resolved. A RUN that fetches changing data (for example apt-get update) stays cached until a layer above it changes.</li>
+<li>In the naive order, <code>COPY . .</code> also copies package.json, so a dependency change invalidates it. Layer and cache behaviour follows classic and BuildKit builds; export and storage details are not modelled.</li></ul>
+<p class="muted">Keys: Space play/pause, Left back, Right step, R reset.</p></section>
+</aside></div>
+</main>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SIM={steps:[],idx:-1,answers:{},pending:null,timer:null,init:null,initSay:''};
+const App={};
+(function(){let t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+$('#theme').onclick=()=>{const n=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('dop:theme',n)}catch(e){};if(App.theme)App.theme()};
+function tally(){let a=0,r=0;for(const k in SIM.answers){a++;const s=SIM.steps[k];if(s&&s.predict&&SIM.answers[k]===s.predict.correct)r++}return{a,r}}
+function hideQuiz(){$('#quiz').hidden=true;SIM.pending=null}
+function render(){
+ const s=SIM.idx>=0?SIM.steps[SIM.idx]:null;
+ $('#say').textContent=s?s.say:SIM.initSay;
+ App.render(s?s.view:SIM.init,s);
+ $('#stepinfo').textContent='Step '+(SIM.idx+1)+' / '+SIM.steps.length;
+ $('#btnBack').disabled=SIM.idx<0;
+ const t=tally();$('#score').textContent='Score '+t.r+'/'+t.a;
+ const sm=$('#summary');
+ if(SIM.idx>=0&&SIM.idx===SIM.steps.length-1){
+  let h='<h2>Summary</h2><p><b>Prediction score: '+t.r+' / '+t.a+'</b>'+(t.a?'':' (turn on Predict first and reset to be quizzed)')+'</p>';
+  h+=(App.summary?App.summary(s):'');
+  const ks=Object.keys(SIM.answers).map(Number).sort((a,b)=>a-b);
+  if(ks.length){h+='<ol>';for(const k of ks){const p=SIM.steps[k].predict,ok=SIM.answers[k]===p.correct;
+   h+='<li><span class="'+(ok?'ok':'bad')+'">'+(ok?'Correct':'Missed')+'</span>: '+esc(p.q)+'<br><span class="muted">You chose: '+esc(p.opts[SIM.answers[k]])+'. Answer: '+esc(p.opts[p.correct])+'. '+esc(p.why)+'</span></li>'}h+='</ol>'}
+  sm.innerHTML=h;sm.hidden=false}else sm.hidden=true;
+ if(App.afterRender)App.afterRender(s);
+}
+function showQuiz(n){
+ const p=SIM.steps[n].predict;SIM.pending=n;
+ $('#quiz p').textContent=p.q;$('#quizFb').textContent='';
+ const o=$('#quiz .opts');o.innerHTML='';
+ p.opts.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.setAttribute('aria-label','Option '+(i+1)+': '+t);b.onclick=()=>answer(i);o.appendChild(b)});
+ $('#quiz').hidden=false;
+}
+function answer(i){
+ const n=SIM.pending;if(n===null)return;const p=SIM.steps[n].predict;SIM.answers[n]=i;
+ [...$('#quiz .opts').children].forEach((b,j)=>{b.disabled=true;if(j===p.correct)b.classList.add('right');else if(j===i)b.classList.add('wrong')});
+ $('#quizFb').innerHTML='<b class="'+(i===p.correct?'ok':'bad')+'">'+(i===p.correct?'Correct. ':'Not quite. ')+'</b>'+esc(p.why);
+ SIM.pending=null;SIM.idx=n;render();
+}
+function pause(){if(SIM.timer){clearInterval(SIM.timer);SIM.timer=null}$('#btnPlay').innerHTML='&#9654; Play';$('#btnPlay').setAttribute('aria-label','Play (Space)')}
+function stepFwd(){
+ if(SIM.pending!==null)return false;
+ const n=SIM.idx+1;if(n>=SIM.steps.length){pause();return false}
+ const s=SIM.steps[n];
+ hideQuiz();
+ if($('#predict').checked&&s.predict&&SIM.answers[n]===undefined){showQuiz(n);pause();return false}
+ SIM.idx=n;render();return true;
+}
+function stepBack(){pause();hideQuiz();if(SIM.idx>=0){SIM.idx--;render()}}
+function reset(){pause();hideQuiz();SIM.answers={};SIM.idx=-1;App.rebuild();render()}
+function play(){
+ if(SIM.timer){pause();return}
+ if(SIM.idx>=SIM.steps.length-1)return;
+ $('#btnPlay').innerHTML='&#10074;&#10074; Pause';$('#btnPlay').setAttribute('aria-label','Pause (Space)');
+ const tick=()=>{if(!stepFwd())pause()};
+ SIM.timer=setInterval(tick,1300/parseFloat($('#speed').value));tick();
+}
+$('#speed').onchange=()=>{if(SIM.timer){clearInterval(SIM.timer);SIM.timer=setInterval(()=>{if(!stepFwd())pause()},1300/parseFloat($('#speed').value))}};
+$('#btnStep').onclick=()=>{pause();stepFwd()};$('#btnBack').onclick=stepBack;$('#btnPlay').onclick=play;$('#btnReset').onclick=reset;
+document.addEventListener('keydown',e=>{
+ const tg=e.target.tagName,ty=e.target.type;if(tg==='SELECT'||tg==='TEXTAREA'||(tg==='INPUT'&&ty!=='checkbox')||e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key===' '){e.preventDefault();play()}
+ else if(e.key==='ArrowRight'){e.preventDefault();pause();stepFwd()}
+ else if(e.key==='ArrowLeft'){e.preventDefault();stepBack()}
+ else if(e.key==='r'||e.key==='R'){e.preventDefault();reset()}
+});
+document.addEventListener('keyup',e=>{if(e.key===' '&&(e.target.tagName==='BUTTON'||e.target.type==='checkbox'))e.preventDefault()});
+
+/* ---------- Docker layer cache core ---------- */
+const DEF={from:2,manifest:0.2,deps:45,src:0.5,build:30,cmd:0};
+const L={
+ from:{ins:'FROM node:20',kind:'base'},
+ manifest:{ins:'COPY package*.json ./',kind:'copy'},
+ deps:{ins:'RUN npm ci',kind:'run'},
+ src:{ins:'COPY . .',kind:'copy'},
+ build:{ins:'RUN npm run build',kind:'run'},
+ cmd:{ins:'CMD ["node","dist/index.js"]',kind:'meta'},
+ srcall:{ins:'COPY . .',kind:'copy'}};
+const ORD={dep:['from','manifest','deps','src','build','cmd'],naive:['from','srcall','deps','build','cmd']};
+const NAME={from:'FROM',manifest:'COPY package*.json',deps:'RUN npm ci',src:'COPY . .',build:'RUN npm run build',cmd:'CMD',srcall:'COPY . .'};
+const cfg={order:'dep',change:'src',line:'deps',dur:Object.assign({},DEF),size:{base:1100,full:250,prod:120,src:5,out:15,slim:180}};
+function durOf(id){return id==='srcall'?cfg.dur.src:cfg.dur[id]}
+/* Does the change touch this layer's own cache key? (content for COPY, instruction text for all) */
+function selfChanged(id,order){
+ const ch=cfg.change;
+ if(ch==='none')return false;
+ if(ch==='src')return id==='src'||id==='srcall';
+ if(ch==='dep')return id==='manifest'||id==='srcall';
+ let t=cfg.line;if(order==='naive'&&(t==='manifest'||t==='src'))t='srcall';
+ return id===t}
+function evaluate(order){
+ const ids=ORD[order];let broken=false,tot=0;
+ const rows=ids.map(id=>{const own=selfChanged(id,order);let st,why;
+  if(broken){st='miss';why='an earlier layer was rebuilt, so this layer cannot be reused'}
+  else if(own){st='miss';broken=true;why=cfg.change==='line'?'the instruction text changed':'the checksum of the copied files changed'}
+  else{st='hit';why=L[id].kind==='run'?'same command string and same parent layer':L[id].kind==='copy'?'same instruction and same file checksums':L[id].kind==='meta'?'same metadata instruction':'same base image reference'}
+  const d=st==='miss'?durOf(id):0;tot+=d;return{id,ins:L[id].ins,st,why,d,dur:durOf(id)}});
+ return{order,rows,total:tot,full:ids.reduce((a,i)=>a+durOf(i),0)}}
+const CH={none:'Nothing changed (rebuild same context)',src:'A source file (for example src/app.js) changed',dep:'The dependency file (package.json) changed',line:'A Dockerfile instruction changed'};
+const fmt=x=>(Math.round(x*10)/10).toFixed(1)+' s';
+function msz(){const s=cfg.size;const single=s.base+s.full+s.src+s.out,multi=s.slim+s.prod+s.out;return{single,multi,saved:single-multi}}
+const SECT=['layers','cmp','multi','mounts'];
+function build(){
+ const ev=evaluate(cfg.order),nv=evaluate('naive'),dv=evaluate('dep'),ids=ORD[cfg.order];
+ const first=ev.rows.findIndex(r=>r.st==='miss');
+ const cold=ids.map(id=>({id,ins:L[id].ins,st:'miss',why:'first build: nothing is cached yet',d:durOf(id),dur:durOf(id)}));
+ const pend=ids.map(id=>({id,ins:L[id].ins,st:'wait',why:'',d:0,dur:durOf(id)}));
+ SIM.steps=[];SIM.init={rows:pend.map(r=>Object.assign({},r)),show:['layers'],note:'Press Step to run the first build.'};
+ SIM.initSay='A Dockerfile is a list of instructions; each becomes a cached layer. Press Step to build it once, then change something and rebuild.';
+ const S=(say,rows,show,note,predict)=>SIM.steps.push({say,view:{rows,show,note,total:rows.reduce((a,r)=>a+r.d,0)},predict});
+ const fullT=ev.full;
+ S('First build on a cold cache: every instruction runs, so every layer is rebuilt and stored. Total '+fmt(fullT)+' (example durations).',cold,['layers'],'Cold cache: all layers are misses.');
+ const chText=cfg.change==='line'?'The Dockerfile line "'+L[cfg.line].ins+'" is edited':CH[cfg.change];
+ S('Now rebuild with this change: '+chText+'. BuildKit walks the instructions top to bottom and asks, for each one, whether a cached layer exists for it.',pend.map(r=>Object.assign({},r)),['layers'],chText,
+  {q:'After this change ('+chText+'), which instruction is the FIRST to be rebuilt (a cache miss)?',opts:ids.map(i=>NAME[i]).concat(['None: everything is a cache hit']),correct:first<0?ids.length:first,
+   why:first<0?'Nothing changed in any instruction or in any copied file, so every layer is reused.':'The first miss is '+NAME[ids[first]]+': '+ev.rows[first].why+'. Everything above it is reused.'});
+ const cur=pend.map(r=>Object.assign({},r));
+ ids.forEach((id,i)=>{const r=ev.rows[i];cur[i]=Object.assign({},r);
+  const after=i>0&&first>=0&&i===first+1&&r.st==='miss';
+  let say=NAME[id]+': '+(r.st==='hit'?'CACHE HIT. ':'REBUILD. ')+r.why.charAt(0).toUpperCase()+r.why.slice(1)+'. '+(r.st==='hit'?'No time spent.':'It costs '+fmt(r.d)+' (example).');
+  S(say,cur.map(x=>Object.assign({},x)),['layers'],say,after?{q:'The layer above ('+NAME[ids[i-1]]+') was just rebuilt. Can '+NAME[id]+' still be reused from cache even though its own instruction and inputs did not change?',opts:['Yes: its own instruction is unchanged, so it is reused','No: a rebuilt parent invalidates every layer after it','Only if it is a RUN instruction','Only if BuildKit is disabled'],correct:1,why:'A layer\'s cache key includes its parent layer. Once one layer is rebuilt, every following layer is rebuilt too, even if its own text is unchanged. This is why instruction order matters.'}:null)});
+ S('Result for the '+(cfg.order==='dep'?'dependency-first':'naive')+' order: '+fmt(ev.total)+' instead of '+fmt(fullT)+' for a cold build. Next: compare it with the other order.',cur,['layers'],'Total this order: '+fmt(ev.total));
+ const better=dv.total<nv.total?'dependency-first':(dv.total>nv.total?'naive':'equal');
+ S('Same change, two orders: naive (COPY . . then install) costs '+fmt(nv.total)+', dependency-first (copy manifest, install, then copy source) costs '+fmt(dv.total)+'. '+(dv.total<nv.total?'Saving '+fmt(nv.total-dv.total)+' because the install layer stays cached.':'No saving for this change because the dependency layer has to be rebuilt either way.'),cur,['layers','cmp'],'Comparison',
+  {q:'For this same change, how does the dependency-first order compare with the naive order on total rebuild time?',opts:['Dependency-first is faster','They take the same time','Naive is faster'],correct:dv.total<nv.total?0:(dv.total===nv.total?1:2),
+   why:dv.total<nv.total?'Putting the rarely-changing manifest and install before the frequently-changing source keeps the expensive install cached. In the naive order a source edit invalidates COPY . ., and therefore the install after it.':'When the dependency file changes, the install layer must run in both orders (and in the naive order COPY . . also includes package.json). The gain only appears for source-only changes.'});
+ const m=msz();
+ S('Multi-stage build: a builder stage compiles with full tooling, then only the build output is copied into a slim runtime stage with COPY --from=builder. Example final size: '+m.multi+' MB instead of '+m.single+' MB single-stage (example sizes).',cur,['layers','cmp','multi'],'Multi-stage',
+  {q:'In a multi-stage build, what ends up in the final image?',opts:['Every stage, stacked together','Only the layers of the last stage, plus anything copied in with COPY --from','The first stage only','Only the build cache'],correct:1,why:'The final image is the last stage. Earlier stages are build-time only; only files explicitly copied with COPY --from=<stage> are carried over, so compilers and dev dependencies stay out.'});
+ S('Beyond the layer cache: BuildKit cache mounts (RUN --mount=type=cache) keep a package-manager directory across builds even when the layer is rebuilt, and registry cache (--cache-to / --cache-from type=registry) shares layers between CI runners.',cur,['layers','cmp','multi','mounts'],'Cache mounts and registry cache');
+}
+function rowsHtml(rows){return '<div class="scroll"><table><thead><tr><th>#</th><th>Instruction</th><th>Result</th><th>Time</th><th>Why</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+(i+1)+'</td><td><code>'+esc(r.ins)+'</code></td><td>'+(r.st==='wait'?'<span class="muted">waiting</span>':'<span class="badge '+(r.st==='hit'?'hit':'miss')+'">'+(r.st==='hit'?'CACHE HIT':'REBUILD')+'</span>')+'</td><td>'+(r.st==='wait'?'':(r.st==='hit'?'0.0 s':fmt(r.d)))+'</td><td>'+esc(r.why)+'</td></tr>').join('')+'</tbody></table></div>'}
+function cmpHtml(){const a=evaluate('naive'),b=evaluate('dep');
+ const col=(v,t)=>'<div class="card"><h3>'+t+'</h3>'+rowsHtml(v.rows)+'<p><b>Total: '+fmt(v.total)+'</b> (cold build '+fmt(v.full)+')</p></div>';
+ return '<h3>Reorder for better caching (same change: '+esc(cfg.change==='line'?'edit to '+L[cfg.line].ins:CH[cfg.change])+')</h3>'+col(a,'Naive order: FROM, COPY . ., RUN npm ci, RUN npm run build, CMD')+col(b,'Dependency-first order: FROM, COPY package*.json, RUN npm ci, COPY . ., RUN npm run build, CMD')+'<p>Difference: <b>'+fmt(a.total-b.total)+'</b> saved by dependency-first.</p>'}
+function multiHtml(){const s=cfg.size,m=msz();
+ const bar=(v,l)=>'<div class="mini"><span style="min-width:120px">'+l+'</span><div class="bar" style="flex:1 1 140px"><i style="width:'+Math.round(v/Math.max(m.single,1)*100)+'%"></i></div><b>'+v+' MB</b></div>';
+ return '<h3>Multi-stage final image size (example sizes, not measurements)</h3>'+bar(m.single,'Single stage')+bar(m.multi,'Multi-stage')+'<p>Single stage = base '+s.base+' + all node_modules '+s.full+' + source '+s.src+' + build output '+s.out+' = <b>'+m.single+' MB</b>. Multi-stage = slim runtime base '+s.slim+' + production-only node_modules '+s.prod+' + build output '+s.out+' = <b>'+m.multi+' MB</b>, saving <b>'+m.saved+' MB</b>.</p><pre>FROM node:20 AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\n\nFROM node:20-slim\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev\nCOPY --from=builder /app/dist ./dist\nCMD ["node","dist/index.js"]</pre>'}
+function mountsHtml(){return '<h3>BuildKit cache mounts and registry cache</h3><ul><li><b>Cache mount</b>: <code>RUN --mount=type=cache,target=/root/.npm npm ci</code>. The layer is still rebuilt when it is invalidated, but the npm download cache directory persists between builds, so packages are not downloaded again. The mount contents are not part of the image.</li><li><b>Registry cache</b>: <code>docker buildx build --cache-to type=registry,ref=REPO:buildcache,mode=max --cache-from type=registry,ref=REPO:buildcache .</code> exports cache to a registry so a fresh CI runner with an empty local cache can reuse layers. <code>mode=max</code> also exports intermediate stage layers. This needs a buildx builder using the docker-container driver (or another external-cache-capable driver).</li><li>On an ephemeral CI runner the local cache is empty, so without registry or other external cache every build is a cold build.</li></ul>'}
+App.render=v=>{
+ let h='<div class="kv"><div>Change<b style="font-size:.95rem">'+esc(cfg.change==='line'?'Edit: '+L[cfg.line].ins:CH[cfg.change])+'</b></div><div>Order<b style="font-size:.95rem">'+(cfg.order==='dep'?'dependency-first':'naive')+'</b></div><div>Hits<b>'+v.rows.filter(r=>r.st==='hit').length+'</b></div><div>Rebuilt<b>'+v.rows.filter(r=>r.st==='miss').length+'</b></div><div>Build time so far<b>'+fmt(v.total)+'</b></div></div>';
+ h+='<p class="muted">All durations are editable example values, not measurements.</p>'+rowsHtml(v.rows);
+ if(v.show.includes('cmp'))h+=cmpHtml();if(v.show.includes('multi'))h+=multiHtml();if(v.show.includes('mounts'))h+=mountsHtml();
+ $('#state').innerHTML=h};
+App.summary=()=>{const nv=evaluate('naive'),dv=evaluate('dep');return '<p>Rule applied: a changed instruction, or changed COPY/ADD file content, invalidates that layer and every layer after it. For this change: naive '+fmt(nv.total)+', dependency-first '+fmt(dv.total)+'.</p>'};
+App.rebuild=()=>build();
+function reset2(){SIM.answers={};reset()}
+function bindIn(){
+ $('#chg').onchange=()=>{cfg.change=$('#chg').value;$('#linesel').disabled=cfg.change!=='line';reset()};
+ $('#linesel').onchange=()=>{cfg.line=$('#linesel').value;reset()};
+ $('#ord').onchange=()=>{cfg.order=$('#ord').value;reset()};
+ document.querySelectorAll('[data-d]').forEach(e=>e.oninput=()=>{const v=parseFloat(e.value);if(isFinite(v)&&v>=0){cfg.dur[e.dataset.d]=v;reset()}});
+ document.querySelectorAll('[data-s]').forEach(e=>e.oninput=()=>{const v=parseFloat(e.value);if(isFinite(v)&&v>=0){cfg.size[e.dataset.s]=v;reset()}});
+ $('#durReset').onclick=()=>{cfg.dur=Object.assign({},DEF);document.querySelectorAll('[data-d]').forEach(e=>e.value=DEF[e.dataset.d]);reset()};
+}
+bindIn();
+reset();
+
+</script></body></html>

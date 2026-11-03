@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CIDR and subnet planner</title>
+<meta name="sim:title" content="CIDR and subnet planner">
+<meta name="sim:topic" content="00-roadmap-prerequisites">
+<meta name="sim:summary" content="Calculate IPv4 CIDR ranges, split blocks, detect overlaps between VPC CIDRs and see AWS reserved addresses.">
+<meta name="sim:concepts" content="cidr,subnet,netmask,broadcast,usable hosts,overlap,vpc peering,transit gateway,aws reserved ip">
+<style>:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#5a6572;--card:#fff;--border:#cfd6de;--accent:#0b63c5;--accent-fg:#fff;--ok:#12703a;--bad:#b3261e;--warn:#9a5b00;--net:#d6e8ff;--host:#ffe9c7;--hi:#e8f1fc;--focus:#7a3cff}
+:root[data-theme=dark]{--bg:#0f1318;--fg:#e6eaef;--muted:#9aa6b4;--card:#171d24;--border:#2d3743;--accent:#5aa2f5;--accent-fg:#06121f;--ok:#4cc380;--bad:#ff8a80;--warn:#f0b24a;--net:#1c3a5e;--host:#4a3410;--hi:#1b2a3c;--focus:#b79bff}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card)}
+header.top h1{font-size:1.15rem;margin:0;flex:1 1 220px;min-width:0}
+a{color:var(--accent)}a.back{min-height:36px;display:inline-flex;align-items:center}
+main{max-width:1200px;margin:0 auto;padding:12px 14px 40px}
+h2{font-size:1rem;margin:0 0 8px}
+.lede{margin:4px 0 12px;color:var(--muted)}
+button,select,input,textarea{font:inherit;color:var(--fg)}
+button{min-height:40px;min-width:40px;padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer}
+button:hover{background:var(--hi)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+select,input[type=number],input[type=text]{min-height:40px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-width:100%}
+input[type=checkbox]{width:20px;height:20px;vertical-align:middle}
+input[type=range]{width:100%;min-height:36px}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.controls label{display:inline-flex;align-items:center;gap:6px;min-height:40px}
+.chip{display:inline-block;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:.85rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;min-width:0;overflow-wrap:anywhere}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+@media(min-width:900px){.grid{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+.say{margin:10px 0 0;padding:8px 10px;border-left:4px solid var(--accent);background:var(--hi);border-radius:4px;min-height:2.6em}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.tw{overflow-x:auto;max-width:100%}
+.quiz{border-color:var(--accent);border-width:2px}
+.quiz .opts{display:grid;gap:8px;margin:8px 0}
+.quiz .opts button{text-align:left;white-space:normal}
+.quiz .opts button.right{border-color:var(--ok);background:var(--hi)}
+.quiz .opts button.wrong{border-color:var(--bad)}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}.warnc{color:var(--warn);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:6px 0}
+.row>label{display:flex;flex-direction:column;gap:2px;min-width:0}
+.note ul{margin:4px 0 0 18px;padding:0}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.mono{overflow-wrap:anywhere}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style></head>
+<body>
+<header class="top"><a class="back" href="../index.html">← Back to curriculum</a><h1>CIDR and subnet planner (IPv4)</h1><button id="btnTheme" aria-label="Toggle light or dark theme">◐ Theme</button></header>
+<main>
+<p class="lede">Type a CIDR to see its network, mask, range and bit layout. The stepper walks a worked VPC planning example; the calculator stays live.</p>
+<section class="controls" aria-label="Playback controls">
+<button id="btnReset" aria-label="Reset simulation (R)">↺ Reset</button>
+<button id="btnBack" aria-label="Previous step (Left arrow)">◀ Back</button>
+<button id="btnPlay" class="primary" aria-label="Play or pause (Space)">▶ Play</button>
+<button id="btnStep" aria-label="Next step (Right arrow)">Step ▶</button>
+<label>Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option></select></label>
+<label><input type="checkbox" id="predictToggle" checked aria-label="Predict first"> Predict first</label>
+<span id="stepinfo" class="chip" aria-live="off">Step 0 / 0</span><span id="score" class="chip">Score 0/0</span>
+</section>
+<section id="quiz" class="card quiz" aria-live="polite" hidden></section>
+<div class="grid">
+<div>
+<section class="card"><h2>CIDR calculator (live)</h2>
+<div class="row"><label style="flex:1 1 220px">IPv4 CIDR <input type="text" id="cidr" value="10.0.0.0/24" autocomplete="off" spellcheck="false" aria-label="IPv4 CIDR block, for example 10.0.0.0/24"></label></div>
+<p id="cerr" class="bad" role="alert" style="margin:0 0 6px"></p>
+<div class="tw"><table id="calc" aria-label="CIDR results"></table></div>
+<h2 style="margin-top:12px">32-bit view</h2>
+<div id="bits" aria-label="32 bit binary view with network and host bits"></div>
+<p style="margin:6px 0 0"><span class="chip" style="background:var(--net)">network bits</span> <span class="chip" style="background:var(--host)">host bits</span></p>
+</section>
+<section class="card"><h2>Worked example (use the stepper)</h2>
+<p class="say" id="say" aria-live="polite">Press Step to walk through planning a VPC block. The calculator above is live as well.</p>
+<p id="exstate" style="margin:8px 0 0"></p></section>
+</div>
+<div>
+<section class="card"><h2>Try it: split into equal subnets</h2>
+<div class="row"><label>New prefix length <input type="number" id="splitp" min="0" max="32" value="26" aria-label="Prefix length of the subnets to create"></label></div>
+<p id="splitinfo" style="margin:0 0 6px"></p>
+<div class="tw" style="max-height:260px;overflow-y:auto"><table id="splitlist" aria-label="Subnet list"></table></div></section>
+<section class="card"><h2>Try it: overlap detector (up to 6 CIDRs)</h2>
+<div id="ovin" class="row"></div>
+<div id="ovres" aria-live="polite"></div></section>
+<section class="card"><h2>AWS mode</h2>
+<label><input type="checkbox" id="aws" aria-label="Enable AWS VPC mode"> Show AWS reserved addresses and size limits</label>
+<div id="awsout" style="margin-top:8px"></div></section>
+<section class="card"><h2>Live state</h2><div class="tw"><table id="state" aria-label="Current state"></table></div></section>
+</div></div>
+<section id="summary" class="card" hidden aria-live="polite"></section>
+<section class="card note"><h2>Simplifications</h2><ul><li>IPv4 only; IPv6 is not covered. Addresses are treated as unsigned 32-bit integers.</li><li>/31 is shown as 2 usable (RFC 3021 point-to-point) and /32 as 1; many devices and cloud services do not treat these as ordinary subnets.</li><li>AWS mode implements the documented 5 reserved addresses per subnet and the /16 to /28 size range for VPC and subnet CIDRs; limits can change, so check the current AWS docs. Secondary CIDR rules, BYOIP and IPAM behaviour are not modelled.</li><li>The overlap check compares address ranges only; it does not model route tables, NAT or which attachments exist. Subnet lists are capped at 4096 rows.</li><li>Example addresses use private RFC 1918 ranges.</li></ul><p style="margin:6px 0 0;color:var(--muted)">All numbers on this page are examples chosen for teaching, not measurements.</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const REDUCED=matchMedia('(prefers-reduced-motion: reduce)').matches;
+(function(){var t=null;try{t=localStorage.getItem('dop:theme')}catch(e){}
+ if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+ document.documentElement.setAttribute('data-theme',t);})();
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+const Engine=(function(){
+ let steps=[],idx=-1,timer=null,answers={},pending=null,cfg=null;
+ const api={};
+ function predictOn(){return $('predictToggle').checked}
+ function interval(){return 1700/parseFloat($('speed').value)}
+ function stop(){if(timer){clearInterval(timer);timer=null}$('btnPlay').textContent='▶ Play';$('btnPlay').setAttribute('aria-pressed','false')}
+ function start(){if(timer)return;$('btnPlay').textContent='⏸ Pause';$('btnPlay').setAttribute('aria-pressed','true');timer=setInterval(step,interval())}
+ function asked(){return Object.keys(answers).length}
+ function right(){return Object.values(answers).filter(a=>a.ok).length}
+ function hideQuiz(){$('quiz').hidden=true;$('quiz').innerHTML=''}
+ function showQuiz(n){
+  const q=steps[n].predict;let h='<h2>Predict first: what happens next?</h2><p>'+esc(q.q)+'</p><div class="opts" role="group" aria-label="Answer options">';
+  q.opts.forEach((o,i)=>{h+='<button data-i="'+i+'" aria-label="Option '+(i+1)+': '+esc(o)+'">'+esc(o)+'</button>'});
+  h+='</div><p style="margin:0;color:var(--muted)">Choose an answer to reveal the next step. Turn off “Predict first” to skip questions.</p>';
+  $('quiz').innerHTML=h;$('quiz').hidden=false;
+  $('quiz').querySelectorAll('button').forEach(b=>b.onclick=()=>answer(n,+b.dataset.i));
+  const f=$('quiz').querySelector('button');if(f)f.focus({preventScroll:false});
+ }
+ function answer(n,i){
+  const q=steps[n].predict,ok=i===q.correct;answers[n]={choice:i,ok:ok};pending=null;idx=n;
+  let h='<h2>Predict first: result</h2><p>'+esc(q.q)+'</p><div class="opts">';
+  q.opts.forEach((o,k)=>{h+='<button disabled class="'+(k===q.correct?'right':(k===i?'wrong':''))+'">'+(k===q.correct?'✔ ':(k===i?'✘ ':''))+esc(o)+'</button>'});
+  h+='</div><p class="'+(ok?'ok':'bad')+'">'+(ok?'Correct.':'Not quite.')+'</p><p>'+esc(q.why)+'</p>';
+  $('quiz').innerHTML=h;render();
+ }
+ function step(){
+  if(pending!==null)return;
+  if(idx>=steps.length-1){stop();return}
+  const n=idx+1,s=steps[n];
+  if(s.predict&&predictOn()&&answers[n]===undefined){pending=n;stop();showQuiz(n);render();return}
+  hideQuiz();idx=n;render();
+  if(idx>=steps.length-1)stop();
+ }
+ function back(){stop();if(pending!==null){pending=null;hideQuiz();render();return}if(idx>=0){idx--;hideQuiz();render()}}
+ function reset(){stop();idx=-1;answers={};pending=null;hideQuiz();render()}
+ function render(){
+  const s=idx>=0?steps[idx]:null;
+  $('stepinfo').textContent='Step '+(idx+1)+' / '+steps.length;
+  $('score').textContent='Score '+right()+'/'+asked();
+  $('btnBack').disabled=(idx<0&&pending===null);
+  cfg.render(s,idx,steps,answers);
+  const sm=$('summary');
+  if(idx>=steps.length-1&&steps.length&&pending===null){
+   let h='<h2>Summary</h2>';
+   if(asked()===0)h+='<p>No predictions were recorded. Switch on “Predict first” and Reset to test yourself.</p>';
+   else{h+='<p><b>Prediction score: '+right()+' / '+asked()+'</b></p><ol>';
+    Object.keys(answers).map(Number).sort((a,b)=>a-b).forEach(n=>{const q=steps[n].predict,a=answers[n];
+     h+='<li><span class="'+(a.ok?'ok':'bad')+'">'+(a.ok?'Correct':'Incorrect')+'</span> — '+esc(q.q)+'<br>Your answer: '+esc(q.opts[a.choice])+(a.ok?'':' · Correct: '+esc(q.opts[q.correct]))+'<br><i>'+esc(q.why)+'</i></li>'});
+    h+='</ol>'}
+   sm.innerHTML=h;sm.hidden=false;
+  }else{sm.hidden=true;sm.innerHTML=''}
+  api.idx=idx;
+ }
+ api.setSteps=function(s){steps=s;reset();window.SIM.steps=steps};
+ api.init=function(c){cfg=c;
+  $('btnStep').onclick=()=>{stop();step()};$('btnBack').onclick=back;$('btnReset').onclick=reset;
+  $('btnPlay').onclick=()=>{if(timer){stop();return}if(pending!==null)return;if(idx>=steps.length-1){reset()}start();step()};
+  $('speed').onchange=()=>{if(timer){stop();start()}};
+  $('predictToggle').onchange=()=>{if(!predictOn()&&pending!==null){const n=pending;pending=null;hideQuiz();idx=n;render()}};
+  $('btnTheme').onclick=()=>{const t=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('dop:theme',t)}catch(e){}};
+  document.addEventListener('keydown',e=>{
+   if(e.ctrlKey||e.metaKey||e.altKey)return;
+   const tg=e.target,tag=tg&&tg.tagName,typing=tag==='INPUT'&&tg.type!=='checkbox'||tag==='TEXTAREA'||tag==='SELECT';
+   if(typing)return;
+   if(e.key===' '){if(tag==='BUTTON')return;e.preventDefault();$('btnPlay').click()}
+   else if(e.key==='ArrowRight'){e.preventDefault();$('btnStep').click()}
+   else if(e.key==='ArrowLeft'){e.preventDefault();$('btnBack').click()}
+   else if(e.key==='r'||e.key==='R'){$('btnReset').click()}
+  });
+ };
+ api.reset=reset;api.stop=stop;api.render=render;
+ return api;
+})();
+window.SIM={steps:[],get idx(){return Engine.idx}};
+
+// ---- unsigned 32-bit IPv4 math (all via >>>0) ----
+function parseIP(s){const m=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim());if(!m)return null;let v=0;for(let i=1;i<=4;i++){const o=+m[i];if(o>255||(m[i].length>1&&m[i][0]==='0'))return null;v=((v*256)+o)}return v>>>0}
+function ipStr(v){v=v>>>0;return [v>>>24,(v>>>16)&255,(v>>>8)&255,v&255].join('.')}
+function maskOf(p){return p===0?0:((0xFFFFFFFF<<(32-p))>>>0)}
+function parseCIDR(s){const m=/^\s*([\d.]+)\s*\/\s*(\d{1,2})\s*$/.exec(s);if(!m)return {err:'Enter a CIDR such as 10.0.0.0/24.'};const ip=parseIP(m[1]);if(ip===null)return {err:'Invalid IPv4 address (four octets, 0–255, no leading zeros).'};const p=+m[2];if(p>32)return {err:'Prefix length must be 0–32.'};return {ip:ip,p:p}}
+function calc(ip,p){
+ const mask=maskOf(p),net=(ip&mask)>>>0,wild=(~mask)>>>0,bc=(net|wild)>>>0,total=Math.pow(2,32-p);
+ let first,last,usable;
+ if(p===32){first=net;last=net;usable=1}
+ else if(p===31){first=net;last=bc;usable=2}
+ else{first=(net+1)>>>0;last=(bc-1)>>>0;usable=total-2}
+ return {ip:ip,p:p,mask:mask,wild:wild,net:net,bc:bc,first:first,last:last,total:total,usable:usable,hostBits:32-p,
+  given:ip!==net}
+}
+function range(c){return [c.net,c.bc]}
+function overlap(a,b){return a.net<=b.bc&&b.net<=a.bc}
+function split(c,np){
+ if(np<c.p||np>32)return null;const n=Math.pow(2,np-c.p),sz=Math.pow(2,32-np),out=[];
+ for(let i=0;i<Math.min(n,4096);i++){out.push(calc((c.net+i*sz)>>>0,np))}
+ return {count:n,list:out,truncated:n>out.length};
+}
+function awsReserved(c){ // documented: first four and last address of a subnet CIDR
+ if(c.total<8)return null;
+ return [[c.net,'network address'],[(c.net+1)>>>0,'VPC router'],[(c.net+2)>>>0,'DNS (base of VPC range + 2)'],[(c.net+3)>>>0,'reserved for future use'],[c.bc,'network broadcast (not supported in a VPC; reserved)']]
+}
+function awsUsable(c){return c.total-5}
+const AWS_MIN=16,AWS_MAX=28;
+// ---- worked example ----
+const EX=[
+ {say:'Goal: plan a VPC for an example workload. Start with the block 10.0.0.0/22 (RFC 1918 private space).',cidr:'10.0.0.0/22'},
+ {say:'Read the prefix: /22 means 22 network bits and 10 host bits (32 − 22). Host bits are the ones free to vary.',cidr:'10.0.0.0/22',hi:'bits'},
+ {say:'Total addresses = 2^10 = 1024. The network address is the all-zeros host (10.0.0.0) and the broadcast is all-ones (10.0.3.255).',cidr:'10.0.0.0/22',hi:'total',predict:{q:'How many usable host addresses does a /26 have in conventional IPv4 (excluding network and broadcast)?',opts:['62','64','60','126'],correct:0,why:'/26 has 32 − 26 = 6 host bits, so 2^6 = 64 addresses; minus network and broadcast leaves 62. (In AWS, 5 are reserved, leaving 59.)'}},
+ {say:'Split the /22 into four /24 subnets: 10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24 and 10.0.3.0/24. Each new bit of prefix halves the size.',cidr:'10.0.0.0/22',split:24,predict:{q:'If you split a /22 into /24 subnets, how many subnets do you get?',opts:['4','2','8','16'],correct:0,why:'Going from /22 to /24 adds 2 prefix bits: 2^2 = 4 subnets of 256 addresses each.'}},
+ {say:'Now check a second network for overlap: 10.0.2.0/23 covers 10.0.2.0–10.0.3.255, which lies inside our /22. Overlapping ranges cannot be routed unambiguously, so they cannot be peered.',cidr:'10.0.0.0/22',ov:['10.0.0.0/22','10.0.2.0/23'],predict:{q:'Can VPC A 10.0.0.0/22 be peered with VPC B 10.0.2.0/23?',opts:['No, the ranges overlap','Yes, they have different prefix lengths','Yes, if both are private','Only with a Transit Gateway'],correct:0,why:'10.0.2.0/23 is entirely inside 10.0.0.0/22. Overlapping CIDRs break VPC peering; AWS Transit Gateway also cannot route between overlapping attachments.'}},
+ {say:'Fix: choose a non-overlapping block such as 10.1.0.0/22. The two ranges now share no addresses.',cidr:'10.0.0.0/22',ov:['10.0.0.0/22','10.1.0.0/22']},
+ {say:'AWS mode: in each subnet AWS reserves five addresses, so a /24 subnet has 256 − 5 = 251 usable addresses. Check the current AWS docs for limits.',cidr:'10.0.0.0/24',aws:true,predict:{q:'AWS reserves 5 addresses in every subnet. How many are usable in a /28 subnet?',opts:['11','14','16','9'],correct:0,why:'A /28 has 16 addresses; AWS reserves 5 (first four and last), leaving 11.'}}
+];
+function colorBits(c,hi){
+ const a=c.ip,pre=c.p;let h='<div style="display:flex;flex-wrap:wrap;gap:6px 10px;font-family:ui-monospace,Menlo,Consolas,monospace">';
+ for(let o=0;o<4;o++){h+='<div style="display:flex">';
+  for(let b=0;b<8;b++){const i=o*8+b,bit=(a>>>(31-i))&1,isNet=i<pre;
+   h+='<span title="bit '+(i+1)+' ('+(isNet?'network':'host')+')" style="display:inline-block;width:1.5ch;min-width:15px;text-align:center;padding:3px 0;border:1px solid var(--border);background:'+(isNet?'var(--net)':'var(--host)')+(hi==='bits'&&i===pre-1?';outline:2px solid var(--accent)':'')+'">'+bit+'</span>'}
+  h+='</div>'}
+ h+='</div><div style="font-family:ui-monospace,monospace;margin-top:4px">'+[0,1,2,3].map(o=>(a>>>(24-8*o))&255).join(' . ')+' &nbsp;|&nbsp; '+pre+' network bits + '+(32-pre)+' host bits</div>';
+ return h;
+}
+let exIdx=-1;
+function curCIDR(){const r=parseCIDR($('cidr').value);return r}
+function row(k,v){return '<tr><th>'+k+'</th><td class="mono">'+v+'</td></tr>'}
+function renderCalc(){
+ const r=curCIDR();$('cerr').textContent=r.err||'';
+ if(r.err){$('calc').innerHTML='';$('bits').innerHTML='';return null}
+ const c=calc(r.ip,r.p);
+ let h=row('Network address',ipStr(c.net))+row('Netmask',ipStr(c.mask)+' (/'+c.p+')')+row('Wildcard',ipStr(c.wild))+row('Broadcast',ipStr(c.bc))+row('First host',ipStr(c.first))+row('Last host',ipStr(c.last))+row('Total addresses','2^'+c.hostBits+' = '+c.total.toLocaleString('en-US'))+row('Usable hosts',c.usable.toLocaleString('en-US')+(c.p>=31?' (RFC 3021 point-to-point /31 and single-host /32)':' (total − 2)'));
+ if(c.given)h+=row('Note','You entered a host address; the network address is '+ipStr(c.net)+'/'+c.p+'.');
+ $('calc').innerHTML=h;$('bits').innerHTML=colorBits(c,exIdx>=0?EX[exIdx].hi:null);
+ return c;
+}
+function renderSplit(c){
+ if(!c){$('splitinfo').textContent='';$('splitlist').innerHTML='';return}
+ const np=parseInt($('splitp').value,10);
+ if(!(np>=0&&np<=32)){$('splitinfo').textContent='Prefix must be 0–32.';$('splitlist').innerHTML='';return}
+ const s=split(c,np);
+ if(!s){$('splitinfo').textContent='New prefix must be ≥ /'+c.p+' (cannot split into larger blocks).';$('splitlist').innerHTML='';return}
+ $('splitinfo').textContent=s.count.toLocaleString('en-US')+' subnets of '+Math.pow(2,32-np).toLocaleString('en-US')+' addresses each'+(s.truncated?' (showing first '+s.list.length+')':'')+'.';
+ const aw=$('aws').checked;
+ let h='<tr><th>#</th><th>CIDR</th><th>Range</th><th>Usable'+(aw?' (AWS)':'')+'</th></tr>';
+ s.list.forEach((x,i)=>{const u=aw?Math.max(0,awsUsable(x)):x.usable;const bad=aw&&(np<AWS_MIN||np>AWS_MAX);
+  h+='<tr><td>'+(i+1)+'</td><td class="mono">'+ipStr(x.net)+'/'+np+'</td><td class="mono">'+ipStr(x.first)+' – '+ipStr(x.last)+'</td><td>'+u+(bad?' <span class="warnc">⚠</span>':'')+'</td></tr>'});
+ $('splitlist').innerHTML=h;
+}
+function renderOverlap(){
+ const ins=[...document.querySelectorAll('#ovin input')];const items=[];let errs=[];
+ ins.forEach((el,i)=>{const v=el.value.trim();if(!v)return;const r=parseCIDR(v);if(r.err){errs.push('Row '+(i+1)+': '+r.err)}else items.push({i:i+1,c:calc(r.ip,r.p)})});
+ let h='';errs.forEach(e=>h+='<p class="bad" style="margin:0">'+esc(e)+'</p>');
+ const pairs=[];let n=0;
+ for(let a=0;a<items.length;a++)for(let b=a+1;b<items.length;b++){n++;if(overlap(items[a].c,items[b].c))pairs.push([items[a],items[b]])}
+ if(items.length<2)h+='<p style="margin:0">Enter at least two CIDRs.</p>';
+ else if(!pairs.length)h+='<p class="ok" style="margin:0">No overlaps among '+items.length+' blocks ('+n+' pairs checked). Safe to peer or attach to a Transit Gateway from an addressing standpoint.</p>';
+ else{h+='<p class="bad" style="margin:0 0 4px">'+pairs.length+' overlapping pair'+(pairs.length>1?'s':'')+' of '+n+' checked:</p><ul style="margin:0 0 0 18px;padding:0">';
+  pairs.forEach(p=>{const a=p[0].c,b=p[1].c,lo=Math.max(a.net,b.net),hi=Math.min(a.bc,b.bc);
+   h+='<li>#'+p[0].i+' <span class="mono">'+ipStr(a.net)+'/'+a.p+'</span> and #'+p[1].i+' <span class="mono">'+ipStr(b.net)+'/'+b.p+'</span> share '+ipStr(lo)+' – '+ipStr(hi)+' ('+(hi-lo+1).toLocaleString('en-US')+' addresses)'+(a.net<=b.net&&a.bc>=b.bc?'; #'+p[1].i+' is inside #'+p[0].i:(b.net<=a.net&&b.bc>=a.bc?'; #'+p[0].i+' is inside #'+p[1].i:''))+'</li>'});
+  h+='</ul>'}
+ $('ovres').innerHTML=h;window.SIM.overlapPairs=pairs.length;
+}
+function renderAws(c){
+ const on=$('aws').checked;let h='';
+ if(!on){$('awsout').innerHTML='<p style="margin:0;color:var(--muted)">Off. Turn on to see reserved addresses and size checks.</p>';return}
+ if(!c){$('awsout').innerHTML='';return}
+ h+='<p style="margin:0 0 4px">Subnet or VPC size /'+c.p+': ';
+ if(c.p<AWS_MIN||c.p>AWS_MAX)h+='<span class="warnc">⚠ outside the documented /'+AWS_MIN+' to /'+AWS_MAX+' range</span>';
+ else h+='<span class="ok">within the documented /'+AWS_MIN+' to /'+AWS_MAX+' range</span>';
+ h+=' <i>(check the current AWS docs)</i></p>';
+ const r=awsReserved(c);
+ if(!r)h+='<p style="margin:0">A /'+c.p+' has only '+c.total+' addresses: fewer than the 5 AWS reserves per subnet, so it is unusable in AWS.</p>';
+ else{h+='<p style="margin:0 0 4px">Per subnet, AWS reserves 5 addresses (first four and last). Usable: '+c.total+' − 5 = <b>'+awsUsable(c)+'</b>.</p><div class="tw"><table><tr><th>Address</th><th>Purpose</th></tr>'+r.map(x=>'<tr><td class="mono">'+ipStr(x[0])+'</td><td>'+x[1]+'</td></tr>').join('')+'</table></div>'}
+ $('awsout').innerHTML=h;
+}
+function renderState(c,s){
+ let h='';
+ h+=row('Entered CIDR',esc($('cidr').value.trim()));
+ h+=row('Valid',c?'yes':'no');
+ if(c){h+=row('Network bits / host bits',c.p+' / '+c.hostBits);h+=row('Usable (standard)',c.usable.toLocaleString('en-US'));if($('aws').checked)h+=row('Usable (AWS subnet)',Math.max(0,awsUsable(c)).toLocaleString('en-US'))}
+ h+=row('Worked example step',(exIdx+1)+' / '+EX.length);
+ $('state').innerHTML=h;
+}
+function renderAll(s,idx){
+ exIdx=idx;
+ if(s){ // drive the live tool from the example step
+  if(s.cidr&&$('cidr').value!==s.cidr)$('cidr').value=s.cidr;
+  if(s.split)$('splitp').value=s.split;
+  if(s.ov){const ins=document.querySelectorAll('#ovin input');ins.forEach((e,i)=>e.value=s.ov[i]||'')}
+  $('aws').checked=!!s.aws;
+ }
+ $('say').textContent=s?s.say:'Press Step to walk through planning a VPC block. The calculator above is live as well.';
+ const c=renderCalc();renderSplit(c);renderOverlap();renderAws(c);renderState(c,s);
+ $('exstate').textContent=s?('Example step '+(idx+1)+' of '+EX.length+'.'):'';
+}
+// overlap inputs
+(function(){const d=['10.0.0.0/16','10.0.128.0/17','172.16.0.0/16','192.168.0.0/24','',''];let h='';
+ d.forEach((v,i)=>{h+='<label style="flex:1 1 130px">CIDR '+(i+1)+' <input type="text" value="'+v+'" autocomplete="off" spellcheck="false" aria-label="Overlap check CIDR '+(i+1)+'"></label>'});
+ $('ovin').innerHTML=h;window.SIM.ovDefaults=d;})();
+Engine.init({render:renderAll});
+Engine.setSteps(EX);
+function live(){Engine.render()}
+function liveNoReset(){const idx=exIdx;const c=renderCalc();renderSplit(c);renderOverlap();renderAws(c);renderState(c)}
+$('cidr').oninput=liveNoReset;$('splitp').oninput=liveNoReset;$('aws').onchange=liveNoReset;
+document.querySelectorAll('#ovin input').forEach(e=>e.oninput=liveNoReset);
+// reset restores inputs
+const _origReset=$('btnReset').onclick;
+$('btnReset').onclick=function(){$('cidr').value='10.0.0.0/24';$('splitp').value=26;$('aws').checked=false;document.querySelectorAll('#ovin input').forEach((e,i)=>e.value=window.SIM.ovDefaults[i]);_origReset()};
+Object.assign(window.SIM,{parseCIDR:parseCIDR,calc:calc,ipStr:ipStr,split:split,overlap:overlap});
+
+</script></body></html>

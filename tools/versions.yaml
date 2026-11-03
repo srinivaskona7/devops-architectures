@@ -1,0 +1,33 @@
+# Single source of truth for version numbers used in the pages.
+# Pages reference these as {{v.key}}; the build fails on an unknown key.
+#
+# VERIFIED = fetched from the upstream release index on 2026-10-31.
+# EXAMPLE  = illustrative value; always confirm against the provider's own support calendar.
+
+# --- VERIFIED ---
+kubernetes_latest: "1.37"
+kubernetes_latest_patch: "1.37.2"
+terraform_latest: "1.17.1"
+terraform_min: "1.9"
+aws_provider: "6.71.0"
+azurerm_provider: "5.12.0"
+google_provider: "8.9.0"
+prometheus: "3.15.1"
+alertmanager: "0.34.2"
+kube_prometheus_stack_chart: "92.16.1"
+aws_lb_controller_chart: "3.6.2"
+eck_operator_chart: "3.5.0"
+action_checkout: "v7.0.1"
+
+# Cloud Kubernetes pairs: an upgrade example is always "from one supported minor to the next".
+# VERIFIED against endoflife.date on 2026-10-31 (EKS standard support: 1.36 until 2027-08-02, 1.37 until 2027-12-01;
+# AKS 1.35 until 2027-03-31, 1.36 until 2027-06-30; GKE 1.35 until 2027-04-11, 1.36 until 2027-08-09).
+eks_from: "1.36"
+eks_to: "1.37"
+aks_from: "1.35"
+aks_to: "1.36"
+gke_from: "1.35"
+gke_to: "1.36"
+
+# --- EXAMPLE ---
+python_runtime: "3.12"
